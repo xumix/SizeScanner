@@ -52,10 +52,10 @@ jobs:
           build-mode: manual
 
       - name: Restore the application
-        run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+        run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration /p:RuntimeIdentifier=win-x64
 
       - name: Build the application
-        run: dotnet build $env:Solution_Name -c $env:Configuration --no-restore
+        run: dotnet build $env:Solution_Name -c $env:Configuration --no-restore --runtime win-x64
 
       - name: Analyze
         uses: github/codeql-action/analyze@v3
