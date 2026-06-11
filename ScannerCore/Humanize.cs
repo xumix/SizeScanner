@@ -1,4 +1,8 @@
-﻿using System;
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
+using System.Globalization;
 
 namespace ScannerCore
 {
@@ -13,7 +17,7 @@ namespace ScannerCore
                 sufIdx++;
                 output /= 1024;
             }
-            return string.Format("{0:F} {1}Byte(s)", output, Suffixes[sufIdx]);
+            return string.Format(CultureInfo.InvariantCulture, "{0:F} {1}Byte(s)", output, Suffixes[sufIdx]);
         }
 
         public static string FsItem(FsItem source)

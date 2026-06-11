@@ -5,7 +5,6 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <RootNamespace>ScannerConsole</RootNamespace>
     <AssemblyName>ScannerConsole</AssemblyName>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
 
   <ItemGroup>

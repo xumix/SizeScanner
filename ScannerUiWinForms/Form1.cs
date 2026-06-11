@@ -1,5 +1,9 @@
-﻿using System;
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -17,16 +21,27 @@ namespace ScannerUiWinForms
 {
     public partial class Form1 : Form
     {
+        private const int DriveButtonInsertIndex = 3;
+
+        private readonly ScanSession _session = new ScanSession();
+        private readonly ChartMapper _chartMapper = new ChartMapper();
+        private readonly UserSettings _settings = UserSettings.Load();
+        private FsItem? _scanRoot;
+        private long _filterThreshold;
+        private CancellationTokenSource? _scanCts;
+        private readonly int _cursorSize;
+        private readonly Font _chartToolTipFont;
+
         public Form1()
         {
             InitializeComponent();
             _chartToolTipFont = new Font(FontFamily.GenericMonospace, Font.Size);
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            RegistryKey reg = null;
+            RegistryKey? reg = null;
             try
             {
-                reg = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Control Panel\Cursors");
-                _cursorSize = reg !=null ? (int)reg.GetValue("CursorBaseSize") : 48;
+                reg = Registry.CurrentUser.CreateSubKey(@"Control Panel\Cursors");
+                _cursorSize = reg != null ? (int)reg.GetValue("CursorBaseSize")! : 48;
             }
             catch
             {
@@ -36,15 +51,7 @@ namespace ScannerUiWinForms
             {
                 reg?.Dispose();
             }
-            
         }
-
-        private DriveScanner _scanner;
-        private FsItem _scanRoot;
-        private long _filterThreshold;
-        private CancellationTokenSource _scanCts;
-        private readonly int _cursorSize;
-        private readonly Font _chartToolTipFont;
 
         private bool IsScanning => cancelScanButtonHost.Visible;
 
@@ -71,8 +78,7 @@ namespace ScannerUiWinForms
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            var staticItems = mainToolStrip.Items.Count;
-            var driveInsertIndex = mainToolStrip.Items.Count - staticItems;
+            var driveInsertIndex = DriveButtonInsertIndex;
             foreach (var driveInfo in DriveInfo.GetDrives().Where(d => d.IsReady))
             {
                 var driveButton = new Button { Text = driveInfo.Name };
@@ -81,35 +87,83 @@ namespace ScannerUiWinForms
                 mainToolStrip.Items.Insert(driveInsertIndex++, driveHost);
             }
 
-            if (driveInsertIndex > mainToolStrip.Items.Count - staticItems)
+            if (driveInsertIndex > DriveButtonInsertIndex)
             {
                 mainToolStrip.Items.Insert(driveInsertIndex,
                     new ToolStripSeparator { Margin = new Padding(8, 2, 8, 2) });
             }
-            freeSpaceComboBox.SelectedIndex = 1;
-            filterThresholdComboBox.SelectedIndex = 4;
-            mainSplitContainer.SplitterDistance = mainSplitContainer.Width - LogicalToDeviceUnits(mainSplitContainer.Width - mainSplitContainer.SplitterDistance);
+
+            freeSpaceComboBox.SelectedIndex = _settings.FreeSpaceIndex;
+            filterThresholdComboBox.SelectedIndex = _settings.FilterIndex;
+            if (_settings.WindowWidth > 0)
+            {
+                Width = _settings.WindowWidth;
+                Height = _settings.WindowHeight;
+            }
+
+            if (_settings.SplitterDistance > 0)
+                mainSplitContainer.SplitterDistance = _settings.SplitterDistance;
+            else
+                mainSplitContainer.SplitterDistance = mainSplitContainer.Width - LogicalToDeviceUnits(mainSplitContainer.Width - mainSplitContainer.SplitterDistance);
+
+            mainSplitContainer.Panel2Collapsed = _settings.InaccessiblePaneCollapsed;
         }
 
-        
-
-        private async void LoadDrive(object sender, EventArgs e)
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            var target = ((Button)sender).Text.Substring(0, 2);
-            _scanner = new DriveScanner();
+            SaveSettings();
+        }
+
+        private void SaveSettings()
+        {
+            _settings.FilterIndex = filterThresholdComboBox.SelectedIndex;
+            _settings.FreeSpaceIndex = freeSpaceComboBox.SelectedIndex;
+            _settings.WindowWidth = Width;
+            _settings.WindowHeight = Height;
+            _settings.SplitterDistance = mainSplitContainer.SplitterDistance;
+            _settings.InaccessiblePaneCollapsed = mainSplitContainer.Panel2Collapsed;
+            _settings.Save();
+        }
+
+        private async void LoadDrive(object? sender, EventArgs e)
+        {
+            var target = ((Button)sender!).Text.Substring(0, 2);
+            await StartScan(target, isDrive: true);
+        }
+
+        private async void browseFolderButton_Click(object sender, EventArgs e)
+        {
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = "Select a folder to scan",
+                UseDescriptionForTitle = true
+            };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+            await StartScan(dialog.SelectedPath, isDrive: false);
+        }
+
+        private async void rescanButton_Click(object sender, EventArgs e)
+        {
+            if (_session.LastTarget == null) return;
+            await StartScan(_session.LastTarget, _session.IsDriveScan);
+        }
+
+        private async Task StartScan(string target, bool isDrive)
+        {
             _scanCts?.Dispose();
             _scanCts = new CancellationTokenSource();
 
             SetScanningState(true);
             SetAppStatus($"Scanning {target}...");
             SetStatusDetails(string.Empty);
-            scanProgressTimer.Start();
+            scanProgressBar.Value = 0;
 
             var token = _scanCts.Token;
+            var progress = new Progress<ScanProgress>(OnScanProgress);
             FsItem root;
             try
             {
-                root = await Task.Run(() => _scanner.ScanDrive(target, token), token);
+                root = await _session.RunAsync(target, isDrive, token, progress);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -117,7 +171,6 @@ namespace ScannerUiWinForms
                 return;
             }
 
-            scanProgressTimer.Stop();
             scanProgressBar.Value = 0;
 
             if (token.IsCancellationRequested)
@@ -127,18 +180,41 @@ namespace ScannerUiWinForms
             }
 
             inaccessibleListBox.Items.Clear();
-            inaccessibleListBox.Items.AddRange(_scanner.Inaccessible.Cast<object>().ToArray());
+            inaccessibleListBox.Items.AddRange(_session.Scanner.Inaccessible.Cast<object>().ToArray());
             UpdateRelaunchAsAdminButtonVisibility();
 
             _scanRoot = root;
-            inaccessibleTotalSizeLabel.Text = Humanize.Size(root.Items[1].Size);
+            if (isDrive)
+            {
+                inaccessibleTotalSizeLabel.Text = Humanize.Size(
+                    DriveScanMetadata.GetInaccessibleEntry(_scanRoot).Size);
+            }
+            else
+            {
+                inaccessibleTotalSizeLabel.Text = Humanize.Size(0);
+            }
+
             RefreshChart();
+            rescanButton.Enabled = true;
 
             SetAppStatus("Ready");
             SetStatusDetails(string.Empty);
             SetScanningState(false);
             _scanCts.Dispose();
             _scanCts = null;
+        }
+
+        private void OnScanProgress(ScanProgress p)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action<ScanProgress>(OnScanProgress), p);
+                return;
+            }
+
+            if (p.PercentComplete.HasValue)
+                scanProgressBar.Value = Math.Min((int)(p.PercentComplete.Value * 10), scanProgressBar.Maximum);
+            SetStatusDetails(p.CurrentPath);
         }
 
         private void SetScanningState(bool scanning)
@@ -160,7 +236,6 @@ namespace ScannerUiWinForms
 
         private void FinishCancelledScan()
         {
-            scanProgressTimer.Stop();
             scanProgressBar.Value = 0;
             SetAppStatus("Scan cancelled");
             SetStatusDetails(string.Empty);
@@ -169,246 +244,42 @@ namespace ScannerUiWinForms
             _scanCts = null;
         }
 
-        private void scanProgressTimer_Tick(object sender, EventArgs e)
-        {
-            scanProgressBar.Value = Math.Min((int) (_scanner.Progress*10), scanProgressBar.Maximum);
-            SetStatusDetails(_scanner.CurrentScanned ?? string.Empty);
-        }
-
         private void DisplayOptionsChanged(object sender, EventArgs e)
         {
             if (IsScanning || _scanRoot == null)
                 return;
             RefreshChart();
+            SaveSettings();
         }
 
         private void RefreshChart()
         {
-            if (_scanRoot == null || _scanner == null)
+            if (_scanRoot == null)
                 return;
-
-            _totals.Clear();
-            _lastObjects = null;
-
-            usageChart.BeginInit();
-            usageChart.ChartAreas.Clear();
-            usageChart.Series.Clear();
 
             var percent = 0.0025f * filterThresholdComboBox.SelectedIndex;
             var includeFreeSpace = freeSpaceComboBox.SelectedIndex == 0;
-            _filterThreshold = _scanner.GetDisplayThreshold(percent, includeFreeSpace);
-
-            var chartRoot = includeFreeSpace ? _scanRoot : GetChartRootWithoutSyntheticEntries();
-            LoadChartDataCollection(0, chartRoot, 0);
-            AlignDoughnuts();
-            usageChart.EndInit();
+            _filterThreshold = _session.Scanner.GetDisplayThreshold(percent, includeFreeSpace);
+            var chartRoot = includeFreeSpace && _session.IsDriveScan
+                ? _scanRoot
+                : GetChartRootWithoutSyntheticEntries();
+            _chartMapper.RefreshChart(usageChart, chartRoot, _filterThreshold, includeFreeSpace);
         }
 
         private FsItem GetChartRootWithoutSyntheticEntries()
         {
+            if (!_session.IsDriveScan || _scanRoot!.Items == null)
+                return _scanRoot!;
+
             return new FsItem(_scanRoot.Name, _scanRoot.Size, _scanRoot.IsDir)
             {
-                Items = _scanRoot.Items.Skip(2).ToList()
+                Items = _scanRoot.Items.Skip(DriveScanMetadata.SyntheticEntryCount).ToList()
             };
-        }
-
-        private readonly Dictionary<Series, long> _totals = new Dictionary<Series, long>();
-        private static readonly Color SliceBorderColor = Color.FromArgb(64, 0, 0, 0);
-
-        private void LoadChartDataCollection(int dataLevel, FsItem dataPoint, long precedingObjectSize, Color? parentColor = null)
-        {
-            Series ser;
-            if (!TryGetDataSeries(dataLevel, dataPoint, out ser)) return;
-
-            if (precedingObjectSize > 0)
-            {
-                var delta = precedingObjectSize - _totals[ser];
-                if (delta > 0)
-                {
-                    AddOrExtendPlaceHolder(delta, ser);
-                }
-            }
-
-            var siblingCount = dataPoint.Items.Count;
-            for (var siblingIndex = 0; siblingIndex < siblingCount; siblingIndex++)
-            {
-                var point = dataPoint.Items[siblingIndex];
-                var itemColor = parentColor == null
-                    ? GetLevelBaseColor(siblingIndex, siblingCount)
-                    : GetChildShade(parentColor.Value, siblingIndex, siblingCount);
-
-                if (point.Size > _filterThreshold)
-                {
-                    ApplySliceStyle(AddPoint(ser, point.Size, point), itemColor);
-                }
-                else
-                {
-                    AddOrExtendPlaceHolder(point.Size, ser);
-                }
-                if (point.Items != null && point.Items.Count > 0)
-                {
-                    LoadChartDataCollection(dataLevel + 1, point, precedingObjectSize, itemColor);
-                }
-                precedingObjectSize += point.Size;
-            }
-            LoadChartDataCollection(dataLevel + 1, Empty, precedingObjectSize);
-        }
-
-        private void AddOrExtendPlaceHolder(long size, Series series)
-        {
-            if (series.Points.Count > 0 && series.Points[series.Points.Count - 1].Tag.Equals(PlaceholderTag))
-            {
-                series.Points[series.Points.Count - 1].YValues[0] += size;
-                _totals[series] += size;
-            }
-            else
-            {
-                var point = AddPoint(series, size, PlaceholderTag);
-                point.Color = Color.FloralWhite;
-                point.BorderWidth = 0;
-            }
-        }
-
-        private static void ApplySliceStyle(DataPoint point, Color fillColor)
-        {
-            point.Color = fillColor;
-            point.BorderWidth = 1;
-            point.BorderColor = SliceBorderColor;
-        }
-
-        private static Color GetLevelBaseColor(int siblingIndex, int siblingCount)
-        {
-            var hue = siblingCount <= 1 ? 0f : 360f * siblingIndex / siblingCount;
-            return ColorFromHsb(hue, 0.95f, 0.68f);
-        }
-
-        private static Color GetChildShade(Color parentColor, int siblingIndex, int siblingCount)
-        {
-            var hue = parentColor.GetHue();
-            var saturation = parentColor.GetSaturation();
-            if (siblingCount <= 1)
-                return ColorFromHsb(hue, saturation, parentColor.GetBrightness());
-
-            const float minBrightness = 0.38f;
-            const float maxBrightness = 0.92f;
-            var brightness = minBrightness + (maxBrightness - minBrightness) * siblingIndex / (siblingCount - 1);
-            return ColorFromHsb(hue, saturation, brightness);
-        }
-
-        private static Color ColorFromHsb(float hue, float saturation, float brightness)
-        {
-            if (saturation <= 0)
-            {
-                var gray = (int)Math.Round(brightness * 255);
-                return Color.FromArgb(gray, gray, gray);
-            }
-
-            hue = (hue % 360 + 360) % 360;
-            var h = hue / 60f;
-            var i = (int)Math.Floor(h);
-            var f = h - i;
-            var p = brightness * (1 - saturation);
-            var q = brightness * (1 - saturation * f);
-            var t = brightness * (1 - saturation * (1 - f));
-
-            float r, g, b;
-            switch (i % 6)
-            {
-                case 0: r = brightness; g = t; b = p; break;
-                case 1: r = q; g = brightness; b = p; break;
-                case 2: r = p; g = brightness; b = t; break;
-                case 3: r = p; g = q; b = brightness; break;
-                case 4: r = t; g = p; b = brightness; break;
-                default: r = brightness; g = p; b = q; break;
-            }
-
-            return Color.FromArgb(
-                (int)Math.Round(r * 255),
-                (int)Math.Round(g * 255),
-                (int)Math.Round(b * 255));
-        }
-
-        private DataPoint AddPoint(Series series, long size, object tag)
-        {
-            var point = new DataPoint
-            {
-                YValues = new[] {(double) size},
-                Tag = tag
-            };
-            series.Points.Add(point);
-            _totals[series] += size;
-            return point;
-        }
-
-        private bool TryGetDataSeries(int dataLevel, FsItem dataPoint, out Series ser)
-        {
-            if (usageChart.ChartAreas.Count == dataLevel)
-            {
-                if (dataPoint == Empty)
-                {
-                    ser = null;
-                    return false;
-                }
-
-                //create chart area and series
-                var ca = new ChartArea("chartAreaLevel" + dataLevel)
-                {
-                    Position =
-                    {
-                        Auto = false,
-                        X = 0,
-                        Y = 0,
-                        Height = 100,
-                        Width = 100
-                    }
-                };
-                if (dataLevel > 0)
-                {
-                    ca.BackColor = Color.Transparent;
-                }
-                usageChart.ChartAreas.Add(ca);
-
-                ser = new Series("seriesLevel" + dataLevel)
-                {
-                    ChartArea = ca.Name,
-                    ChartType = SeriesChartType.Doughnut,
-                    IsXValueIndexed = true,
-                    BorderWidth = 1,
-                    BorderColor = SliceBorderColor
-                };
-                usageChart.Series.Add(ser);
-                _totals.Add(ser, 0);
-            }
-            else
-            {
-                ser = usageChart.Series[dataLevel];
-            }
-            return true;
-        }
-
-        private static readonly FsItem Empty = new FsItem(null, 0, false) {Items = new List<FsItem>()};
-        private const string PlaceholderTag = "Placeholder";
-
-        private void AlignDoughnuts()
-        {
-            for (int i = usageChart.Series.Count - 1; i >= 0; i--)
-            {
-                var totalVisible = usageChart.Series[i].Points.Sum(p => p.Tag.Equals(PlaceholderTag) ? 0 : p.YValues[0]);
-                if (totalVisible <= _filterThreshold)
-                {
-                    usageChart.Series.RemoveAt(i);
-                }
-            }
-            var singleWidth = 85.0/usageChart.Series.Count;
-            for (int i = 0; i < usageChart.Series.Count; i++)
-            {
-                usageChart.Series[i].CustomProperties = "PieStartAngle=270, DoughnutRadius=" + (int) (85 - singleWidth*i);
-            }
         }
 
         private Point _last;
-        private IList<HitTestResult> _lastObjects;
-        private string _lastTip;
+        private IList<HitTestResult>? _lastObjects;
+        private string _lastTip = string.Empty;
         private string _chartToolTipText = string.Empty;
         private Point _pendingToolTipLocation;
         private bool _chartToolTipVisible;
@@ -436,8 +307,8 @@ namespace ScannerUiWinForms
                     var fsItems = GetFsItemsArray();
                     SetStatusDetails(BuildFullPath(fsItems));
                 }
-                var offset = LogicalToDeviceUnits(_cursorSize/2);
-                ScheduleChartToolTip(_lastTip, (int)(e.X + offset*0.75), e.Y + offset);
+                var offset = LogicalToDeviceUnits(_cursorSize / 2);
+                ScheduleChartToolTip(_lastTip, (int)(e.X + offset * 0.75), e.Y + offset);
             }
             else
             {
@@ -478,7 +349,7 @@ namespace ScannerUiWinForms
             if (depth == 0)
                 return name;
 
-            return new string(' ', (depth - 1)*4) + "` " + name;
+            return new string(' ', (depth - 1) * 4) + "` " + name;
         }
 
         private void chartToolTip_Popup(object sender, PopupEventArgs e)
@@ -528,7 +399,7 @@ namespace ScannerUiWinForms
 
         private Size MeasureChartToolTip(string text)
         {
-            var lines = text.Split(new[] {Environment.NewLine}, StringSplitOptions.None);
+            var lines = text.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
             var padding = LogicalToDeviceUnits(6);
             var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
             var lineHeight = TextRenderer.MeasureText("M", _chartToolTipFont, Size.Empty, flags).Height;
@@ -537,7 +408,7 @@ namespace ScannerUiWinForms
                 .DefaultIfEmpty(0)
                 .Max();
 
-            return new Size(width + padding*2, lineHeight*lines.Length + padding*2);
+            return new Size(width + padding * 2, lineHeight * lines.Length + padding * 2);
         }
 
         private void chartToolTip_Draw(object sender, DrawToolTipEventArgs e)
@@ -552,7 +423,7 @@ namespace ScannerUiWinForms
             var x = e.Bounds.Left + padding;
             var y = e.Bounds.Top + padding;
 
-            foreach (var line in text.Split(new[] {Environment.NewLine}, StringSplitOptions.None))
+            foreach (var line in text.Split(new[] { Environment.NewLine }, StringSplitOptions.None))
             {
                 TextRenderer.DrawText(e.Graphics, line, _chartToolTipFont, new Point(x, y), SystemColors.InfoText, flags);
                 y += lineHeight;
@@ -561,18 +432,22 @@ namespace ScannerUiWinForms
 
         private FsItem[] GetFsItemsArray()
         {
+            if (_lastObjects == null)
+                return Array.Empty<FsItem>();
+
             return _lastObjects.Where(o => o.Object != null && o.ChartElementType == ChartElementType.DataPoint)
-                               .Select(o => ((DataPoint) o.Object).Tag as FsItem)
+                               .Select(o => ((DataPoint)o.Object!).Tag as FsItem)
                                .Where(t => t != null)
+                               .Cast<FsItem>()
                                .ToArray();
         }
 
         private string BuildFullPath(FsItem[] fsItems)
         {
-            if (_scanner == null || fsItems.Length == 0)
+            if (fsItems.Length == 0)
                 return string.Empty;
 
-            var builder = new StringBuilder(_scanner.CurrentTarget);
+            var builder = new StringBuilder(_session.Scanner.CurrentTarget ?? string.Empty);
             for (int i = fsItems.Length - 1; i >= 0; i--)
             {
                 builder.Append(Path.DirectorySeparatorChar);
@@ -583,7 +458,7 @@ namespace ScannerUiWinForms
 
         private bool CompareCollections(IList<HitTestResult> result)
         {
-            if ((_lastObjects == null ^ result == null) || result == null)
+            if (_lastObjects == null)
                 return false;
             if (_lastObjects.Count != result.Count)
                 return false;
@@ -598,12 +473,12 @@ namespace ScannerUiWinForms
         private void toggleInaccessiblePaneButton_Click(object sender, EventArgs e)
         {
             mainSplitContainer.Panel2Collapsed ^= true;
+            SaveSettings();
         }
 
         private void UpdateRelaunchAsAdminButtonVisibility()
         {
-            relaunchAsAdminButton.Visible = _scanner != null
-                && _scanner.Inaccessible.Length > 0
+            relaunchAsAdminButton.Visible = _session.Scanner.Inaccessible.Length > 0
                 && !IsRunningAsAdministrator();
         }
 
@@ -648,6 +523,22 @@ namespace ScannerUiWinForms
             _last = Point.Empty;
         }
 
+        private void chartContextMenu_Opening(object sender, CancelEventArgs e)
+        {
+            if (IsFreeSpaceUnderCursor())
+                e.Cancel = true;
+        }
+
+        private bool IsFreeSpaceUnderCursor()
+        {
+            var clientPoint = usageChart.PointToClient(System.Windows.Forms.Cursor.Position);
+            var hits = usageChart.HitTest(clientPoint.X, clientPoint.Y, true, ChartElementType.DataPoint);
+            return hits.Any(h =>
+                h.Object is DataPoint dp &&
+                dp.Tag is FsItem item &&
+                item.Name == DriveScanMetadata.FreeSpaceName);
+        }
+
         private void chartContextMenu_Opened(object sender, EventArgs e)
         {
             var cached = GetFsItemsArray();
@@ -667,63 +558,45 @@ namespace ScannerUiWinForms
                                  Humanize.FsItem(cached[0]));
             ShowChartToolTip(builder.ToString(),
                              usageChart,
-                             usageChart.PointToClient(new Point(chartContextMenu.Left, chartContextMenu.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi/96.0)))));
+                             usageChart.PointToClient(new Point(chartContextMenu.Left, chartContextMenu.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi / 96.0)))));
         }
 
         private void showInExplorerMenuItem_Click(object sender, EventArgs e)
         {
-            StartExplorerSelect((string)chartContextMenu.Tag);
-        }
-
-        public static void StartExplorerSelect(string objectToSelect)
-        {
-            StartExplorer("/select,\"" + objectToSelect + "\"");
-        }
-
-        public static void StartExplorer(string command = null)
-        {
-            const string explorerString = "explorer.exe";
-            Process.Start(explorerString, command);
+            FileSystemActions.ShowInExplorer((string)chartContextMenu.Tag!);
         }
 
         private void deleteMenuItem_Click(object sender, EventArgs e)
         {
-            var path = (string) chartContextMenu.Tag;
-            int i = 0;
-            if (File.Exists(path))
-            {
-                i = 1;
-            }
-            else if (Directory.Exists(path))
-            {
-                i = 2;
-            }
-            if (i == 0)
-            {
-                MessageBox.Show("Object is already unavailable.");
+            TryDeleteSelectedItem(permanent: false);
+        }
+
+        private void deletePermanentlyMenuItem_Click(object sender, EventArgs e)
+        {
+            TryDeleteSelectedItem(permanent: true);
+        }
+
+        private void TryDeleteSelectedItem(bool permanent)
+        {
+            var path = (string)chartContextMenu.Tag!;
+            var prompt = permanent
+                ? "Are you sure you want to permanently delete " + path + "? This cannot be undone."
+                : "Move to Recycle Bin?\n\n" + path;
+            var title = permanent ? "Permanently delete" : "Move to Recycle Bin";
+
+            if (MessageBox.Show(prompt, title, MessageBoxButtons.YesNo) == DialogResult.No)
                 return;
-            }
-            if (
-                MessageBox.Show("Are you sure you want to delete " + path, "Confirm operation", MessageBoxButtons.YesNo) ==
-                DialogResult.No)
-            {
-                return;
-            }
-            try
-            {
-                if (i == 1)
-                {
-                    File.Delete(path);
-                }
-                else
-                {
-                    Directory.Delete(path, true);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error occurred: " + ex);
-            }
+
+            if (!FileSystemActions.TryDelete(path, permanent, out var error))
+                MessageBox.Show(error ?? "Delete failed.");
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.F5) { rescanButton.PerformClick(); return true; }
+            if (keyData == Keys.Escape && IsScanning) { cancelScanButton.PerformClick(); return true; }
+            if (keyData == (Keys.Control | Keys.O)) { browseFolderButton.PerformClick(); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
     }
 }

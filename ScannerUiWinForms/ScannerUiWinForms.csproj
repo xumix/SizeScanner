@@ -18,6 +18,10 @@
   <ItemGroup>
     <ProjectReference Include="..\ScannerCore\ScannerCore.csproj" />
     <PackageReference Include="WinForms.DataVisualization" />
+    <PackageReference Include="MinVer">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

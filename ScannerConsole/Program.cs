@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -22,15 +25,17 @@ namespace ScannerConsole
             }
 
             var scanner = new DriveScanner();
-            FsItem root = null;
-            Exception failure = null;
+            FsItem? root = null;
+            Exception? failure = null;
             var elapsed = Stopwatch.StartNew();
+            ScanProgress? lastProgress = null;
 
+            var progress = new Progress<ScanProgress>(p => lastProgress = p);
             var worker = new Thread(() =>
             {
                 try
                 {
-                    root = scanner.ScanDirectory(target, CancellationToken.None);
+                    root = scanner.ScanDirectory(target, CancellationToken.None, progress);
                 }
                 catch (Exception ex)
                 {
@@ -47,7 +52,7 @@ namespace ScannerConsole
                 {
                     while (worker.IsAlive)
                     {
-                        var current = scanner.CurrentScanned ?? target;
+                        var current = lastProgress != null ? lastProgress.CurrentPath : (scanner.CurrentScanned ?? target);
                         ctx.Status($"Scanning {Markup.Escape(current)}");
                         Thread.Sleep(250);
                     }

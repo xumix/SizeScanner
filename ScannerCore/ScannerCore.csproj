@@ -4,6 +4,5 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <RootNamespace>ScannerCore</RootNamespace>
     <AssemblyName>ScannerCore</AssemblyName>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
 </Project>

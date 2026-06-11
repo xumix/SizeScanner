@@ -1,0 +1,37 @@
+stages:
+  - build
+  - test
+  - publish
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "true"
+
+build:
+  stage: build
+  tags:
+    - windows
+  script:
+    - dotnet restore SizeScanner.sln
+    - dotnet build SizeScanner.sln -c Release --no-restore
+
+test:
+  stage: test
+  tags:
+    - windows
+  needs: [build]
+  script:
+    - dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release -v n
+
+publish:
+  stage: publish
+  tags:
+    - windows
+  needs: [test]
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - dotnet publish ScannerUiWinForms/ScannerUiWinForms.csproj -c Release -r win-x64 --self-contained false -o publish/
+  artifacts:
+    paths:
+      - publish/

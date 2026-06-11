@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 
@@ -18,11 +21,11 @@ namespace ScannerCore
             LastModified = lastModified;
         }
 
-        public string Name { get; private set; }
+        public string Name { get; }
         public long Size { get; set; }
         public bool IsDir { get; private set; }
         public DateTime LastModified { get; private set; }
 
-        public List<FsItem> Items { get; set; }
+        public List<FsItem>? Items { get; set; }
     }
 }

@@ -1,4 +1,7 @@
-﻿using System;
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -59,7 +62,7 @@ namespace ScannerCore
             internal LARGE_INTEGER AllocationSize;
             internal CreateFileOptions FileAttributes;
             internal UInt32 FileNameLength;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = FDI_FileName_FieldSize)] internal Byte[] FileName;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = FDI_FileName_FieldSize)] internal Byte[] FileName = null!;
         }
 
         readonly int FileNameOffset = Marshal.SizeOf(typeof(FILE_DIRECTORY_INFORMATION)) - FDI_FileName_FieldSize;
@@ -338,7 +341,7 @@ namespace ScannerCore
             PreferAllocatedSize = preferAllocatedSize;
         }
 
-        public List<FsItem> Scan(string dir, ref long processed)
+        public List<FsItem>? Scan(string dir, ref long processed)
         {
 
             var hFolder = NativeMethods.CreateFile(dir,

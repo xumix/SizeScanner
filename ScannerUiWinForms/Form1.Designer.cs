@@ -1,4 +1,7 @@
-﻿namespace ScannerUiWinForms
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+namespace ScannerUiWinForms
 {
     partial class Form1
     {
@@ -33,6 +36,11 @@
             System.Windows.Forms.DataVisualization.Charting.ChartArea chartArea1 = new System.Windows.Forms.DataVisualization.Charting.ChartArea();
             System.Windows.Forms.DataVisualization.Charting.Series series1 = new System.Windows.Forms.DataVisualization.Charting.Series();
             this.mainToolStrip = new System.Windows.Forms.ToolStrip();
+            this.browseFolderButton = new System.Windows.Forms.Button();
+            this.browseFolderButtonHost = new System.Windows.Forms.ToolStripControlHost(this.browseFolderButton);
+            this.rescanButton = new System.Windows.Forms.Button();
+            this.rescanButtonHost = new System.Windows.Forms.ToolStripControlHost(this.rescanButton);
+            this.toolStripSeparatorBrowse = new System.Windows.Forms.ToolStripSeparator();
             this.scanProgressBar = new System.Windows.Forms.ToolStripProgressBar();
             this.cancelScanButton = new System.Windows.Forms.Button();
             this.cancelScanButtonHost = new System.Windows.Forms.ToolStripControlHost(this.cancelScanButton);
@@ -43,13 +51,13 @@
             this.toolStripSeparatorBeforePane = new System.Windows.Forms.ToolStripSeparator();
             this.toggleInaccessiblePaneButton = new System.Windows.Forms.Button();
             this.toggleInaccessiblePaneButtonHost = new System.Windows.Forms.ToolStripControlHost(this.toggleInaccessiblePaneButton);
-            this.scanProgressTimer = new System.Windows.Forms.Timer(this.components);
             this.chartToolTipTimer = new System.Windows.Forms.Timer(this.components);
             this.mainSplitContainer = new System.Windows.Forms.SplitContainer();
             this.usageChart = new System.Windows.Forms.DataVisualization.Charting.Chart();
             this.chartContextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.showInExplorerMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.deleteMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.deletePermanentlyMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.inaccessibleListBox = new System.Windows.Forms.ListBox();
             this.inaccessibleHeaderPanel = new System.Windows.Forms.FlowLayoutPanel();
             this.inaccessibleHeaderPrefixLabel = new System.Windows.Forms.Label();
@@ -75,6 +83,9 @@
             // 
             this.mainToolStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
             this.mainToolStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.browseFolderButtonHost,
+            this.rescanButtonHost,
+            this.toolStripSeparatorBrowse,
             this.scanProgressBar,
             this.cancelScanButtonHost,
             this.toolStripSeparatorAfterScan,
@@ -90,6 +101,42 @@
             this.mainToolStrip.Size = new System.Drawing.Size(1581, 46);
             this.mainToolStrip.TabIndex = 0;
             this.mainToolStrip.Text = "mainToolStrip";
+            // 
+            // browseFolderButton
+            // 
+            this.browseFolderButton.Name = "browseFolderButton";
+            this.browseFolderButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
+            this.browseFolderButton.Size = new System.Drawing.Size(78, 33);
+            this.browseFolderButton.TabIndex = 0;
+            this.browseFolderButton.Text = "Browse...";
+            this.browseFolderButton.UseVisualStyleBackColor = true;
+            this.browseFolderButton.Click += new System.EventHandler(this.browseFolderButton_Click);
+            // 
+            // browseFolderButtonHost
+            // 
+            this.browseFolderButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
+            this.browseFolderButtonHost.Name = "browseFolderButtonHost";
+            // 
+            // rescanButton
+            // 
+            this.rescanButton.Enabled = false;
+            this.rescanButton.Name = "rescanButton";
+            this.rescanButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
+            this.rescanButton.Size = new System.Drawing.Size(78, 33);
+            this.rescanButton.TabIndex = 0;
+            this.rescanButton.Text = "Rescan";
+            this.rescanButton.UseVisualStyleBackColor = true;
+            this.rescanButton.Click += new System.EventHandler(this.rescanButton_Click);
+            // 
+            // rescanButtonHost
+            // 
+            this.rescanButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
+            this.rescanButtonHost.Name = "rescanButtonHost";
+            // 
+            // toolStripSeparatorBrowse
+            // 
+            this.toolStripSeparatorBrowse.Margin = new System.Windows.Forms.Padding(8, 2, 8, 2);
+            this.toolStripSeparatorBrowse.Name = "toolStripSeparatorBrowse";
             // 
             // scanProgressBar
             // 
@@ -176,11 +223,6 @@
             this.toggleInaccessiblePaneButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.toggleInaccessiblePaneButtonHost.Name = "toggleInaccessiblePaneButtonHost";
             // 
-            // scanProgressTimer
-            // 
-            this.scanProgressTimer.Interval = 300;
-            this.scanProgressTimer.Tick += new System.EventHandler(this.scanProgressTimer_Tick);
-            // 
             // chartToolTipTimer
             // 
             this.chartToolTipTimer.Interval = 100;
@@ -231,10 +273,12 @@
             this.chartContextMenu.ImageScalingSize = new System.Drawing.Size(24, 24);
             this.chartContextMenu.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.showInExplorerMenuItem,
-            this.deleteMenuItem});
+            this.deleteMenuItem,
+            this.deletePermanentlyMenuItem});
             this.chartContextMenu.Name = "chartContextMenu";
-            this.chartContextMenu.Size = new System.Drawing.Size(135, 68);
+            this.chartContextMenu.Size = new System.Drawing.Size(135, 100);
             this.chartContextMenu.Closed += new System.Windows.Forms.ToolStripDropDownClosedEventHandler(this.chartContextMenu_Closed);
+            this.chartContextMenu.Opening += new System.ComponentModel.CancelEventHandler(this.chartContextMenu_Opening);
             this.chartContextMenu.Opened += new System.EventHandler(this.chartContextMenu_Opened);
             // 
             // showInExplorerMenuItem
@@ -250,6 +294,13 @@
             this.deleteMenuItem.Size = new System.Drawing.Size(134, 32);
             this.deleteMenuItem.Text = "Delete";
             this.deleteMenuItem.Click += new System.EventHandler(this.deleteMenuItem_Click);
+            // 
+            // deletePermanentlyMenuItem
+            // 
+            this.deletePermanentlyMenuItem.Name = "deletePermanentlyMenuItem";
+            this.deletePermanentlyMenuItem.Size = new System.Drawing.Size(134, 32);
+            this.deletePermanentlyMenuItem.Text = "Delete permanently";
+            this.deletePermanentlyMenuItem.Click += new System.EventHandler(this.deletePermanentlyMenuItem_Click);
             // 
             // inaccessibleListBox
             // 
@@ -364,6 +415,7 @@
             this.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
             this.Name = "Form1";
             this.Text = "SizeScanner";
+            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Form1_FormClosing);
             this.Load += new System.EventHandler(this.Form1_Load);
             this.mainToolStrip.ResumeLayout(false);
             this.mainToolStrip.PerformLayout();
@@ -386,12 +438,16 @@
         #endregion
 
         private System.Windows.Forms.ToolStrip mainToolStrip;
+        private System.Windows.Forms.Button browseFolderButton;
+        private System.Windows.Forms.ToolStripControlHost browseFolderButtonHost;
+        private System.Windows.Forms.Button rescanButton;
+        private System.Windows.Forms.ToolStripControlHost rescanButtonHost;
+        private System.Windows.Forms.ToolStripSeparator toolStripSeparatorBrowse;
         private System.Windows.Forms.ToolStripProgressBar scanProgressBar;
         private System.Windows.Forms.Button cancelScanButton;
         private System.Windows.Forms.ToolStripControlHost cancelScanButtonHost;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparatorAfterScan;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparatorBeforePane;
-        private System.Windows.Forms.Timer scanProgressTimer;
         private System.Windows.Forms.Timer chartToolTipTimer;
         private System.Windows.Forms.SplitContainer mainSplitContainer;
         private System.Windows.Forms.ListBox inaccessibleListBox;
@@ -409,6 +465,7 @@
         private System.Windows.Forms.ContextMenuStrip chartContextMenu;
         private System.Windows.Forms.ToolStripMenuItem showInExplorerMenuItem;
         private System.Windows.Forms.ToolStripMenuItem deleteMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem deletePermanentlyMenuItem;
         private System.Windows.Forms.StatusStrip mainStatusStrip;
         private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabelStatus;
         private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabelDetails;

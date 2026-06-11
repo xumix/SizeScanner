@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="ScannerConsole/ScannerConsole.csproj" />
+  <Project Path="ScannerCore.Tests/ScannerCore.Tests.csproj" />
+  <Project Path="ScannerCore/ScannerCore.csproj" />
+  <Project Path="ScannerUiWinForms/ScannerUiWinForms.csproj" />
+</Solution>
