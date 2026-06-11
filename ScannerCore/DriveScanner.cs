@@ -30,12 +30,12 @@ namespace ScannerCore
             return (long) (percent*(includeFreeSpace ? _total : _occupied));
         }
 
-        public FsItem ScanDrive(string driveName) //C:
+        public FsItem ScanDrive(string driveName, CancellationToken run = default) //C:
         {
             var drive = new DriveInfo(driveName);
             _occupied = drive.TotalSize - drive.TotalFreeSpace;
 
-            var root = ScanUnitInternal(driveName, true, CancellationToken.None);
+            var root = ScanUnitInternal(driveName, true, run);
             root.Items.InsertRange(0, new[]
             {
                 new FsItem("[Free space]", drive.TotalFreeSpace, false),

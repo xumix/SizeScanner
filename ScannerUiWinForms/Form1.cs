@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Security.Principal;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
@@ -40,9 +41,25 @@ namespace ScannerUiWinForms
         private DriveScanner _scanner;
         private FsItem _scanRoot;
         private long _filterThreshold;
+        private CancellationTokenSource _scanCts;
         private readonly int _cursorSize;
 
-        private bool IsScanning => !mainToolStrip.Enabled;
+        private bool IsScanning => cancelScanButtonHost.Visible;
+
+        private static ToolStripControlHost CreateToolbarButtonHost(Button button, bool autoSize = false)
+        {
+            button.UseVisualStyleBackColor = true;
+            button.AutoSize = autoSize;
+            button.Padding = new Padding(10, 4, 10, 4);
+            if (!autoSize && button.Width < 60)
+                button.Size = new Size(60, 33);
+
+            return new ToolStripControlHost(button)
+            {
+                Margin = new Padding(4, 2, 4, 2),
+                AutoSize = autoSize
+            };
+        }
 
         private void SetAppStatus(string text) =>
             toolStripStatusLabelStatus.Text = text;
@@ -53,11 +70,19 @@ namespace ScannerUiWinForms
         private void Form1_Load(object sender, EventArgs e)
         {
             var staticItems = mainToolStrip.Items.Count;
+            var driveInsertIndex = mainToolStrip.Items.Count - staticItems;
             foreach (var driveInfo in DriveInfo.GetDrives().Where(d => d.IsReady))
             {
-                mainToolStrip.Items.Insert(mainToolStrip.Items.Count - staticItems,
-                                        new ToolStripButton(driveInfo.Name, null,
-                                                            (o, ea) => LoadDrive((ToolStripItem) o)));
+                var driveButton = new Button { Text = driveInfo.Name };
+                driveButton.Click += LoadDrive;
+                var driveHost = CreateToolbarButtonHost(driveButton, autoSize: true);
+                mainToolStrip.Items.Insert(driveInsertIndex++, driveHost);
+            }
+
+            if (driveInsertIndex > mainToolStrip.Items.Count - staticItems)
+            {
+                mainToolStrip.Items.Insert(driveInsertIndex,
+                    new ToolStripSeparator { Margin = new Padding(8, 2, 8, 2) });
             }
             freeSpaceComboBox.SelectedIndex = 1;
             filterThresholdComboBox.SelectedIndex = 4;
@@ -66,17 +91,38 @@ namespace ScannerUiWinForms
 
         
 
-        private async void LoadDrive(ToolStripItem sender)
+        private async void LoadDrive(object sender, EventArgs e)
         {
-            var target = sender.Text.Substring(0, 2);
+            var target = ((Button)sender).Text.Substring(0, 2);
             _scanner = new DriveScanner();
+            _scanCts?.Dispose();
+            _scanCts = new CancellationTokenSource();
 
-            mainToolStrip.Enabled = false;
+            SetScanningState(true);
             SetAppStatus($"Scanning {target}...");
             SetStatusDetails(string.Empty);
             scanProgressTimer.Start();
 
-            var root = await Task.Run(() => _scanner.ScanDrive(target));
+            var token = _scanCts.Token;
+            FsItem root;
+            try
+            {
+                root = await Task.Run(() => _scanner.ScanDrive(target, token), token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                FinishCancelledScan();
+                return;
+            }
+
+            scanProgressTimer.Stop();
+            scanProgressBar.Value = 0;
+
+            if (token.IsCancellationRequested)
+            {
+                FinishCancelledScan();
+                return;
+            }
 
             inaccessibleListBox.Items.Clear();
             inaccessibleListBox.Items.AddRange(_scanner.Inaccessible.Cast<object>().ToArray());
@@ -86,11 +132,39 @@ namespace ScannerUiWinForms
             inaccessibleTotalSizeLabel.Text = Humanize.Size(root.Items[1].Size);
             RefreshChart();
 
-            scanProgressTimer.Stop();
-            scanProgressBar.Value = 0;
             SetAppStatus("Ready");
             SetStatusDetails(string.Empty);
-            mainToolStrip.Enabled = true;
+            SetScanningState(false);
+            _scanCts.Dispose();
+            _scanCts = null;
+        }
+
+        private void SetScanningState(bool scanning)
+        {
+            cancelScanButtonHost.Visible = scanning;
+            cancelScanButton.Enabled = true;
+            foreach (ToolStripItem item in mainToolStrip.Items)
+            {
+                if (item != cancelScanButtonHost)
+                    item.Enabled = !scanning;
+            }
+        }
+
+        private void cancelScanButton_Click(object sender, EventArgs e)
+        {
+            cancelScanButton.Enabled = false;
+            _scanCts?.Cancel();
+        }
+
+        private void FinishCancelledScan()
+        {
+            scanProgressTimer.Stop();
+            scanProgressBar.Value = 0;
+            SetAppStatus("Scan cancelled");
+            SetStatusDetails(string.Empty);
+            SetScanningState(false);
+            _scanCts?.Dispose();
+            _scanCts = null;
         }
 
         private void scanProgressTimer_Tick(object sender, EventArgs e)
