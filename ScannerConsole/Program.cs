@@ -1,30 +1,85 @@
 ﻿using System;
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using ScannerCore;
+using Spectre.Console;
 
 namespace ScannerConsole
 {
-    class Program
+    internal static class Program
     {
-        static void Main()
+        private static int Main(string[] args)
         {
-            var scanner = new DriveScanner();
-            FsItem root;
+            var target = args.Length > 0
+                ? args[0]
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-            var worker = new Thread(() => root = scanner.ScanDirectory("Z:\\Backup\\Mike", CancellationToken.None));
-            var s = System.Diagnostics.Stopwatch.StartNew();
+            if (!Directory.Exists(target))
+            {
+                AnsiConsole.MarkupLine($"[red]Directory does not exist:[/] {Markup.Escape(target)}");
+                return 1;
+            }
+
+            var scanner = new DriveScanner();
+            FsItem root = null;
+            Exception failure = null;
+            var elapsed = Stopwatch.StartNew();
+
+            var worker = new Thread(() =>
+            {
+                try
+                {
+                    root = scanner.ScanDirectory(target, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+            });
+
+            AnsiConsole.MarkupLine($"[bold]Scanning:[/] {Markup.Escape(target)}");
             worker.Start();
 
-            while (worker.IsAlive)
-            {
-                Console.WriteLine($"Current: {scanner.CurrentScanned}");
-                Thread.Sleep(100);
-            }
-            s.Stop();
-            Console.WriteLine($"Elapsed: {s.ElapsedMilliseconds / 1000.0} seconds.");
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey();
-        }
+            AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .Start("Scanning directory tree...", ctx =>
+                {
+                    while (worker.IsAlive)
+                    {
+                        var current = scanner.CurrentScanned ?? target;
+                        ctx.Status($"Scanning {Markup.Escape(current)}");
+                        Thread.Sleep(250);
+                    }
+                });
 
+            worker.Join();
+            elapsed.Stop();
+
+            if (failure != null)
+            {
+                AnsiConsole.WriteException(failure);
+                return 1;
+            }
+
+            if (root == null)
+            {
+                AnsiConsole.MarkupLine("[red]Scan did not return a root item.[/]");
+                return 1;
+            }
+
+            AnsiConsole.MarkupLine($"[green]Complete[/] in {elapsed.Elapsed.TotalSeconds:F2} seconds");
+            AnsiConsole.MarkupLine($"[bold]Total size:[/] {Markup.Escape(Humanize.Size(root.Size))}");
+
+            var table = new Table { Title = new TableTitle("Inaccessible Paths") };
+            table.AddColumn("Path");
+            foreach (var path in scanner.Inaccessible)
+            {
+                table.AddRow(Markup.Escape(path));
+            }
+            AnsiConsole.Write(table);
+
+            return 0;
+        }
     }
 }

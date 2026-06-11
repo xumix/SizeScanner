@@ -228,7 +228,7 @@ namespace ScannerUiWinForms
         }
 
         private Point _last;
-        private HitTestResult[] _lastObjects;
+        private IList<HitTestResult> _lastObjects;
         private string _lastTip;
 
         private void chart1_MouseMove(object sender, MouseEventArgs e)
@@ -238,7 +238,7 @@ namespace ScannerUiWinForms
 
             contextMenuStrip1.Hide();
             var objectUnder = chart1.HitTest(e.X, e.Y, true, ChartElementType.DataPoint);
-            if (objectUnder.Length > 0)
+            if (objectUnder.Count > 0)
             {
                 if (!CompareCollections(objectUnder))
                 {
@@ -277,13 +277,13 @@ namespace ScannerUiWinForms
                                .ToArray();
         }
 
-        private bool CompareCollections(HitTestResult[] result)
+        private bool CompareCollections(IList<HitTestResult> result)
         {
             if ((_lastObjects == null ^ result == null) || result == null)
                 return false;
-            if (_lastObjects.Length != result.Length)
+            if (_lastObjects.Count != result.Count)
                 return false;
-            for (int i = 0; i < result.Length; i++)
+            for (int i = 0; i < result.Count; i++)
             {
                 if (_lastObjects[i].Object != result[i].Object)
                     return false;

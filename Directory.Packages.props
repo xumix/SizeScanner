@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="WinForms.DataVisualization" Version="1.10.0" />
+    <PackageVersion Include="Spectre.Console" Version="0.55.2" />
+  </ItemGroup>
+</Project>
