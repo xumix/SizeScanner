@@ -27,6 +27,9 @@ namespace ScannerUiWinForms
         private readonly ChartMapper _chartMapper = new ChartMapper();
         private readonly UserSettings _settings = UserSettings.Load();
         private FsItem? _scanRoot;
+        private FsItem? _scopedChartRoot;
+        private FsItem? _chartRootWithoutSynthetic;
+        private string _displayChartRootPath = string.Empty;
         private long _filterThreshold;
         private CancellationTokenSource? _scanCts;
         private readonly int _cursorSize;
@@ -40,7 +43,7 @@ namespace ScannerUiWinForms
             RegistryKey? reg = null;
             try
             {
-                reg = Registry.CurrentUser.CreateSubKey(@"Control Panel\Cursors");
+                reg = Registry.CurrentUser.OpenSubKey(@"Control Panel\Cursors");
                 _cursorSize = reg != null ? (int)reg.GetValue("CursorBaseSize")! : 48;
             }
             catch
@@ -51,6 +54,26 @@ namespace ScannerUiWinForms
             {
                 reg?.Dispose();
             }
+
+            AssignButtonIcons();
+        }
+
+        private void AssignButtonIcons()
+        {
+            var iconSize = LogicalToDeviceUnits(16);
+            var color = SystemColors.ControlText;
+
+            AssignButtonIcon(chartGoUpButton, UiIcons.Up(iconSize, color));
+            AssignButtonIcon(chartGoToRootButton, UiIcons.Root(iconSize, color));
+            AssignButtonIcon(toggleInaccessiblePaneButton, UiIcons.ToggleInaccessiblePane(iconSize, color));
+            AssignButtonIcon(relaunchAsAdminButton, UiIcons.RunAsAdministrator(iconSize, color));
+        }
+
+        private static void AssignButtonIcon(Button button, Bitmap image)
+        {
+            button.Image = image;
+            button.ImageAlign = ContentAlignment.MiddleCenter;
+            button.TextImageRelation = TextImageRelation.ImageBeforeText;
         }
 
         private bool IsScanning => cancelScanButtonHost.Visible;
@@ -107,11 +130,17 @@ namespace ScannerUiWinForms
                 mainSplitContainer.SplitterDistance = mainSplitContainer.Width - LogicalToDeviceUnits(mainSplitContainer.Width - mainSplitContainer.SplitterDistance);
 
             mainSplitContainer.Panel2Collapsed = _settings.InaccessiblePaneCollapsed;
+            chartNavPanel.Resize += (_, _) => UpdateChartScopeLabelWidth();
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             SaveSettings();
+            chartGoUpButton.Image?.Dispose();
+            chartGoToRootButton.Image?.Dispose();
+            toggleInaccessiblePaneButton.Image?.Dispose();
+            relaunchAsAdminButton.Image?.Dispose();
+            _chartToolTipFont.Dispose();
         }
 
         private void SaveSettings()
@@ -179,11 +208,14 @@ namespace ScannerUiWinForms
                 return;
             }
 
+            var inaccessiblePaths = _session.Scanner.Inaccessible;
             inaccessibleListBox.Items.Clear();
-            inaccessibleListBox.Items.AddRange(_session.Scanner.Inaccessible.Cast<object>().ToArray());
-            UpdateRelaunchAsAdminButtonVisibility();
+            inaccessibleListBox.Items.AddRange(inaccessiblePaths);
+            UpdateRelaunchAsAdminButtonVisibility(inaccessiblePaths.Length);
 
             _scanRoot = root;
+            _chartRootWithoutSynthetic = BuildChartRootWithoutSyntheticEntries(root, isDrive);
+            ResetChartScope();
             if (isDrive)
             {
                 inaccessibleTotalSizeLabel.Text = Humanize.Size(
@@ -206,12 +238,6 @@ namespace ScannerUiWinForms
 
         private void OnScanProgress(ScanProgress p)
         {
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action<ScanProgress>(OnScanProgress), p);
-                return;
-            }
-
             if (p.PercentComplete.HasValue)
                 scanProgressBar.Value = Math.Min((int)(p.PercentComplete.Value * 10), scanProgressBar.Maximum);
             SetStatusDetails(p.CurrentPath);
@@ -260,25 +286,100 @@ namespace ScannerUiWinForms
             var percent = 0.0025f * filterThresholdComboBox.SelectedIndex;
             var includeFreeSpace = freeSpaceComboBox.SelectedIndex == 0;
             _filterThreshold = _session.Scanner.GetDisplayThreshold(percent, includeFreeSpace);
-            var chartRoot = includeFreeSpace && _session.IsDriveScan
-                ? _scanRoot
-                : GetChartRootWithoutSyntheticEntries();
-            _chartMapper.RefreshChart(usageChart, chartRoot, _filterThreshold, includeFreeSpace);
+            _chartMapper.RefreshChart(usageChart, GetDisplayChartRoot(), _filterThreshold, includeFreeSpace);
         }
 
-        private FsItem GetChartRootWithoutSyntheticEntries()
+        private FsItem GetBaseChartRoot()
         {
-            if (!_session.IsDriveScan || _scanRoot!.Items == null)
-                return _scanRoot!;
+            var includeFreeSpace = freeSpaceComboBox.SelectedIndex == 0;
+            return includeFreeSpace && _session.IsDriveScan
+                ? _scanRoot!
+                : GetChartRootWithoutSyntheticEntries();
+        }
 
-            return new FsItem(_scanRoot.Name, _scanRoot.Size, _scanRoot.IsDir)
+        private FsItem GetDisplayChartRoot() =>
+            _scopedChartRoot ?? GetBaseChartRoot();
+
+        private void ResetChartScope()
+        {
+            _scopedChartRoot = null;
+            UpdateDisplayChartRootPath();
+            UpdateChartNavButtons();
+        }
+
+        private void UpdateChartNavButtons()
+        {
+            chartNavPanel.Visible = _scopedChartRoot != null;
+            if (_scopedChartRoot == null)
+                return;
+
+            chartScopeLabel.Text = $"{_displayChartRootPath}  |  {Humanize.FsItem(_scopedChartRoot)}";
+            UpdateChartScopeLabelWidth();
+        }
+
+        private void UpdateDisplayChartRootPath()
+        {
+            if (_scopedChartRoot == null || _scanRoot == null)
             {
-                Items = _scanRoot.Items.Skip(DriveScanMetadata.SyntheticEntryCount).ToList()
+                _displayChartRootPath = _session.Scanner.CurrentTarget ?? string.Empty;
+                return;
+            }
+
+            _displayChartRootPath = GetPathForNode(_scopedChartRoot);
+        }
+
+        private string GetPathForNode(FsItem node) =>
+            _scanRoot != null && node.TryGetPathFrom(_scanRoot, out var path)
+                ? path
+                : _session.Scanner.CurrentTarget ?? string.Empty;
+
+        private static FsItem? BuildChartRootWithoutSyntheticEntries(FsItem scanRoot, bool isDrive)
+        {
+            if (!isDrive || scanRoot.Items == null)
+                return null;
+
+            return new FsItem(scanRoot.Name, scanRoot.Size, scanRoot.IsDir)
+            {
+                Items = scanRoot.Items.Skip(DriveScanMetadata.SyntheticEntryCount).ToList()
             };
         }
 
+        private void UpdateChartScopeLabelWidth()
+        {
+            if (!chartNavPanel.Visible)
+                return;
+
+            var available = chartNavPanel.ClientSize.Width - chartScopeLabel.Left - chartNavPanel.Padding.Right;
+            if (available > 0)
+                chartScopeLabel.MaximumSize = new Size(available, 0);
+        }
+
+        private static bool CanScopeTo(FsItem? item)
+        {
+            if (item == null || !item.IsDir)
+                return false;
+            if (item.Items == null || item.Items.Count == 0)
+                return false;
+            if (item.Name == DriveScanMetadata.FreeSpaceName || item.Name == DriveScanMetadata.InaccessibleName)
+                return false;
+            return true;
+        }
+
+        private void ScopeChartTo(FsItem directory)
+        {
+            _scopedChartRoot = directory;
+            UpdateDisplayChartRootPath();
+            UpdateChartNavButtons();
+            RefreshChart();
+        }
+
+        private FsItem GetChartRootWithoutSyntheticEntries() =>
+            _chartRootWithoutSynthetic ?? _scanRoot!;
+
         private Point _last;
         private IList<HitTestResult>? _lastObjects;
+        private FsItem[] _lastFsItems = Array.Empty<FsItem>();
+        private string _lastStatusPath = string.Empty;
         private string _lastTip = string.Empty;
         private string _chartToolTipText = string.Empty;
         private Point _pendingToolTipLocation;
@@ -299,14 +400,13 @@ namespace ScannerUiWinForms
                 if (!CompareCollections(objectUnder))
                 {
                     _lastObjects = objectUnder;
+                    _lastFsItems = ExtractFsItems(objectUnder);
+                    _lastStatusPath = BuildFullPath(_lastFsItems);
                     BuildToolTipText();
                     CancelChartToolTip();
                 }
                 if (!IsScanning)
-                {
-                    var fsItems = GetFsItemsArray();
-                    SetStatusDetails(BuildFullPath(fsItems));
-                }
+                    SetStatusDetails(_lastStatusPath);
                 var offset = LogicalToDeviceUnits(_cursorSize / 2);
                 ScheduleChartToolTip(_lastTip, (int)(e.X + offset * 0.75), e.Y + offset);
             }
@@ -325,9 +425,59 @@ namespace ScannerUiWinForms
                 SetStatusDetails(string.Empty);
         }
 
+        private void usageChart_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || IsScanning || _scanRoot == null)
+                return;
+
+            CancelChartToolTip();
+            var fsItems = GetFsItemsAt(e.X, e.Y);
+            for (int i = 0; i < fsItems.Length; i++)
+            {
+                if (CanScopeTo(fsItems[i]))
+                {
+                    ScopeChartTo(fsItems[i]);
+                    return;
+                }
+            }
+        }
+
+        private FsItem[] GetFsItemsAt(int x, int y)
+        {
+            var hits = usageChart.HitTest(x, y, true, ChartElementType.DataPoint);
+            return ExtractFsItems(hits);
+        }
+
+        private void chartGoUpButton_Click(object sender, EventArgs e)
+        {
+            if (_scopedChartRoot == null || _scanRoot == null)
+                return;
+
+            var parent = _scopedChartRoot.Parent;
+            if (parent == null || ReferenceEquals(parent, _scanRoot))
+                ResetChartScope();
+            else
+            {
+                _scopedChartRoot = parent;
+                UpdateDisplayChartRootPath();
+            }
+
+            UpdateChartNavButtons();
+            RefreshChart();
+        }
+
+        private void chartGoToRootButton_Click(object sender, EventArgs e)
+        {
+            if (_scopedChartRoot == null)
+                return;
+
+            ResetChartScope();
+            RefreshChart();
+        }
+
         private void BuildToolTipText()
         {
-            var fsItems = GetFsItemsArray().Reverse().ToArray();
+            var fsItems = _lastFsItems.Reverse().ToArray();
             if (fsItems.Length == 0)
             {
                 _lastTip = string.Empty;
@@ -381,14 +531,6 @@ namespace ScannerUiWinForms
             _chartToolTipVisible = false;
         }
 
-        private void ShowChartToolTip(string text, Control control, int x, int y)
-        {
-            chartToolTipTimer.Stop();
-            _chartToolTipText = text ?? string.Empty;
-            chartToolTip.Show(_chartToolTipText, control, x, y);
-            _chartToolTipVisible = true;
-        }
-
         private void ShowChartToolTip(string text, Control control, Point point)
         {
             chartToolTipTimer.Stop();
@@ -430,30 +572,40 @@ namespace ScannerUiWinForms
             }
         }
 
-        private FsItem[] GetFsItemsArray()
+        private FsItem[] GetFsItemsArray() => _lastFsItems;
+
+        private static FsItem[] ExtractFsItems(IList<HitTestResult> hits)
         {
-            if (_lastObjects == null)
+            var count = 0;
+            foreach (var hit in hits)
+            {
+                if (hit.Object is DataPoint { Tag: FsItem } && hit.ChartElementType == ChartElementType.DataPoint)
+                    count++;
+            }
+
+            if (count == 0)
                 return Array.Empty<FsItem>();
 
-            return _lastObjects.Where(o => o.Object != null && o.ChartElementType == ChartElementType.DataPoint)
-                               .Select(o => ((DataPoint)o.Object!).Tag as FsItem)
-                               .Where(t => t != null)
-                               .Cast<FsItem>()
-                               .ToArray();
+            var items = new FsItem[count];
+            var index = 0;
+            foreach (var hit in hits)
+            {
+                if (hit.Object is DataPoint { Tag: FsItem item } && hit.ChartElementType == ChartElementType.DataPoint)
+                    items[index++] = item;
+            }
+
+            return items;
         }
 
         private string BuildFullPath(FsItem[] fsItems)
         {
             if (fsItems.Length == 0)
-                return string.Empty;
+                return _displayChartRootPath;
 
-            var builder = new StringBuilder(_session.Scanner.CurrentTarget ?? string.Empty);
+            var path = _displayChartRootPath;
             for (int i = fsItems.Length - 1; i >= 0; i--)
-            {
-                builder.Append(Path.DirectorySeparatorChar);
-                builder.Append(fsItems[i].Name);
-            }
-            return builder.ToString();
+                path = Path.Combine(path, fsItems[i].Name);
+            return path;
         }
 
         private bool CompareCollections(IList<HitTestResult> result)
@@ -476,9 +628,12 @@ namespace ScannerUiWinForms
             SaveSettings();
         }
 
-        private void UpdateRelaunchAsAdminButtonVisibility()
+        private void UpdateRelaunchAsAdminButtonVisibility(int inaccessibleCount = -1)
         {
-            relaunchAsAdminButton.Visible = _session.Scanner.Inaccessible.Length > 0
+            if (inaccessibleCount < 0)
+                inaccessibleCount = inaccessibleListBox.Items.Count;
+
+            relaunchAsAdminButton.Visible = inaccessibleCount > 0
                 && !IsRunningAsAdministrator();
         }
 

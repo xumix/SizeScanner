@@ -53,6 +53,11 @@ namespace ScannerUiWinForms
             this.toggleInaccessiblePaneButtonHost = new System.Windows.Forms.ToolStripControlHost(this.toggleInaccessiblePaneButton);
             this.chartToolTipTimer = new System.Windows.Forms.Timer(this.components);
             this.mainSplitContainer = new System.Windows.Forms.SplitContainer();
+            this.chartContainerPanel = new System.Windows.Forms.Panel();
+            this.chartNavPanel = new System.Windows.Forms.FlowLayoutPanel();
+            this.chartGoUpButton = new System.Windows.Forms.Button();
+            this.chartGoToRootButton = new System.Windows.Forms.Button();
+            this.chartScopeLabel = new System.Windows.Forms.Label();
             this.usageChart = new System.Windows.Forms.DataVisualization.Charting.Chart();
             this.chartContextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.showInExplorerMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -73,6 +78,8 @@ namespace ScannerUiWinForms
             this.mainSplitContainer.Panel1.SuspendLayout();
             this.mainSplitContainer.Panel2.SuspendLayout();
             this.mainSplitContainer.SuspendLayout();
+            this.chartContainerPanel.SuspendLayout();
+            this.chartNavPanel.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.usageChart)).BeginInit();
             this.chartContextMenu.SuspendLayout();
             this.inaccessibleHeaderPanel.SuspendLayout();
@@ -238,7 +245,7 @@ namespace ScannerUiWinForms
             // 
             // mainSplitContainer.Panel1
             // 
-            this.mainSplitContainer.Panel1.Controls.Add(this.usageChart);
+            this.mainSplitContainer.Panel1.Controls.Add(this.chartContainerPanel);
             // 
             // mainSplitContainer.Panel2
             // 
@@ -249,6 +256,68 @@ namespace ScannerUiWinForms
             this.mainSplitContainer.SplitterDistance = 1154;
             this.mainSplitContainer.SplitterWidth = 6;
             this.mainSplitContainer.TabIndex = 1;
+            // 
+            // chartContainerPanel
+            // 
+            this.chartContainerPanel.Controls.Add(this.chartNavPanel);
+            this.chartContainerPanel.Controls.Add(this.usageChart);
+            this.chartContainerPanel.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.chartContainerPanel.Location = new System.Drawing.Point(0, 0);
+            this.chartContainerPanel.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
+            this.chartContainerPanel.Name = "chartContainerPanel";
+            this.chartContainerPanel.Size = new System.Drawing.Size(1154, 855);
+            this.chartContainerPanel.TabIndex = 0;
+            // 
+            // chartNavPanel
+            // 
+            this.chartNavPanel.AutoSize = true;
+            this.chartNavPanel.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.chartNavPanel.BackColor = System.Drawing.SystemColors.Control;
+            this.chartNavPanel.Controls.Add(this.chartGoUpButton);
+            this.chartNavPanel.Controls.Add(this.chartGoToRootButton);
+            this.chartNavPanel.Controls.Add(this.chartScopeLabel);
+            this.chartNavPanel.Dock = System.Windows.Forms.DockStyle.Top;
+            this.chartNavPanel.Location = new System.Drawing.Point(0, 0);
+            this.chartNavPanel.Margin = new System.Windows.Forms.Padding(0);
+            this.chartNavPanel.Name = "chartNavPanel";
+            this.chartNavPanel.Padding = new System.Windows.Forms.Padding(8, 8, 8, 4);
+            this.chartNavPanel.Size = new System.Drawing.Size(1154, 50);
+            this.chartNavPanel.TabIndex = 1;
+            this.chartNavPanel.Visible = false;
+            this.chartNavPanel.WrapContents = false;
+            // 
+            // chartGoUpButton
+            // 
+            this.chartGoUpButton.AutoSize = true;
+            this.chartGoUpButton.Margin = new System.Windows.Forms.Padding(0, 0, 4, 0);
+            this.chartGoUpButton.Name = "chartGoUpButton";
+            this.chartGoUpButton.Padding = new System.Windows.Forms.Padding(8, 4, 8, 4);
+            this.chartGoUpButton.Size = new System.Drawing.Size(75, 34);
+            this.chartGoUpButton.TabIndex = 0;
+            this.chartGoUpButton.Text = "Go up";
+            this.chartGoUpButton.UseVisualStyleBackColor = true;
+            this.chartGoUpButton.Click += new System.EventHandler(this.chartGoUpButton_Click);
+            // 
+            // chartGoToRootButton
+            // 
+            this.chartGoToRootButton.AutoSize = true;
+            this.chartGoToRootButton.Margin = new System.Windows.Forms.Padding(0);
+            this.chartGoToRootButton.Name = "chartGoToRootButton";
+            this.chartGoToRootButton.Padding = new System.Windows.Forms.Padding(8, 4, 8, 4);
+            this.chartGoToRootButton.Size = new System.Drawing.Size(101, 34);
+            this.chartGoToRootButton.TabIndex = 1;
+            this.chartGoToRootButton.Text = "Go to root";
+            this.chartGoToRootButton.UseVisualStyleBackColor = true;
+            this.chartGoToRootButton.Click += new System.EventHandler(this.chartGoToRootButton_Click);
+            // 
+            // chartScopeLabel
+            // 
+            this.chartScopeLabel.AutoEllipsis = true;
+            this.chartScopeLabel.AutoSize = true;
+            this.chartScopeLabel.Margin = new System.Windows.Forms.Padding(12, 8, 0, 0);
+            this.chartScopeLabel.Name = "chartScopeLabel";
+            this.chartScopeLabel.TabIndex = 2;
+            this.chartScopeLabel.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // usageChart
             // 
@@ -265,6 +334,7 @@ namespace ScannerUiWinForms
             this.usageChart.Size = new System.Drawing.Size(1154, 855);
             this.usageChart.TabIndex = 0;
             this.usageChart.Text = "usageChart";
+            this.usageChart.MouseClick += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseClick);
             this.usageChart.MouseMove += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseMove);
             this.usageChart.MouseLeave += new System.EventHandler(this.usageChart_MouseLeave);
             // 
@@ -424,6 +494,10 @@ namespace ScannerUiWinForms
             this.mainSplitContainer.Panel2.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.mainSplitContainer)).EndInit();
             this.mainSplitContainer.ResumeLayout(false);
+            this.chartContainerPanel.ResumeLayout(false);
+            this.chartContainerPanel.PerformLayout();
+            this.chartNavPanel.ResumeLayout(false);
+            this.chartNavPanel.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.usageChart)).EndInit();
             this.chartContextMenu.ResumeLayout(false);
             this.inaccessibleHeaderPanel.ResumeLayout(false);
@@ -450,6 +524,11 @@ namespace ScannerUiWinForms
         private System.Windows.Forms.ToolStripSeparator toolStripSeparatorBeforePane;
         private System.Windows.Forms.Timer chartToolTipTimer;
         private System.Windows.Forms.SplitContainer mainSplitContainer;
+        private System.Windows.Forms.Panel chartContainerPanel;
+        private System.Windows.Forms.FlowLayoutPanel chartNavPanel;
+        private System.Windows.Forms.Button chartGoUpButton;
+        private System.Windows.Forms.Button chartGoToRootButton;
+        private System.Windows.Forms.Label chartScopeLabel;
         private System.Windows.Forms.ListBox inaccessibleListBox;
         private System.Windows.Forms.DataVisualization.Charting.Chart usageChart;
         private System.Windows.Forms.ToolTip chartToolTip;
