@@ -52,7 +52,7 @@ jobs:
           build-mode: manual
 
       - name: Restore the application
-        run: dotnet restore $env:Solution_Name -c $env:Configuration -r win-x64
+        run: dotnet restore $env:Solution_Name -r win-x64
 
       - name: Build the application
         run: dotnet build $env:Solution_Name -c $env:Configuration --no-restore
