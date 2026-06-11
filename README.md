@@ -25,8 +25,8 @@ Compared with the original Scanner2 tool, SizeScanner:
 From the repository root:
 
 ```powershell
-dotnet restore SizeScanner.sln
-dotnet build SizeScanner.sln -c Debug
+dotnet restore SizeScanner.slnx
+dotnet build SizeScanner.slnx -c Debug
 dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
 ```
 
@@ -97,7 +97,14 @@ Use this to validate scanner changes without launching the chart UI.
 
 ## CI
 
-GitLab CI (`.gitlab-ci.yml`) requires a **Windows** runner (`tags: [windows]`). Pipelines build the solution, run `ScannerCore.Tests`, and publish release artifacts when a git tag is pushed.
+Both GitLab CI and GitHub Actions require **Windows** runners — the app uses WinForms and native filesystem APIs.
+
+| Platform | Config | When it runs |
+|----------|--------|--------------|
+| GitLab | [`.gitlab-ci.yml`](.gitlab-ci.yml) | Every push; publish on git tag (`tags: [windows]`) |
+| GitHub | [`.github/workflows/dotnet-desktop.yml`](.github/workflows/dotnet-desktop.yml) (+ `release.yml`, `codeql.yml`) | Push/PR to `main`/`master`; release on `v*` tag; weekly CodeQL |
+
+All pipelines restore and build `SizeScanner.slnx` in Release, run `ScannerCore.Tests`, and collect code coverage. Tag releases publish a self-contained `win-x64` app — GitLab stores the `publish/` folder as a job artifact; GitHub attaches `SizeScanner-win-x64.zip` to a GitHub Release.
 
 ## License
 

@@ -1,0 +1,97 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+#
+# Adapted from the official .NET Core Desktop starter workflow for SizeScanner.
+# WAP/MSIX packaging and code-signing steps are omitted — this app publishes as a
+# self-contained win-x64 folder (see release.yml). For the full MSIX sample, see:
+# https://github.com/microsoft/github-actions-for-desktop-apps
+
+name: .NET Core Desktop
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: dotnet-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    runs-on: windows-latest
+
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+      Solution_Name: SizeScanner.slnx
+      Test_Project_Path: ScannerCore.Tests/ScannerCore.Tests.csproj
+      App_Project_Path: ScannerUiWinForms/ScannerUiWinForms.csproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install .NET Core
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            Directory.Packages.props
+
+      - name: Setup MSBuild.exe
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Execute unit tests
+        run: >
+          dotnet test $env:Test_Project_Path
+          -c ${{ matrix.configuration }}
+          --verbosity normal
+          --logger "trx;LogFileName=test-results.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults
+
+      - name: Restore the application
+        run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+        env:
+          Configuration: ${{ matrix.configuration }}
+
+      - name: Build the application
+        run: dotnet build $env:Solution_Name -c ${{ matrix.configuration }} --no-restore
+
+      - name: Upload test results
+        if: matrix.configuration == 'Release' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/**
+
+      - name: Upload coverage
+        if: matrix.configuration == 'Release' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: TestResults/**/*.cobertura.xml
+
+      - name: Upload build artifacts
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Desktop App (${{ matrix.configuration }})
+          path: |
+            ScannerUiWinForms/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
+            ScannerCore/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/

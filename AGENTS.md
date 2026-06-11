@@ -11,7 +11,7 @@ Windows-only disk usage visualizer (.NET 10). Inspired by Steffen Gerlach's Scan
 | `ScannerUiWinForms/` | Production WinForms UI (`Form1.cs` = orchestration; `Form1.Designer.cs` = controls) |
 | `ScannerConsole/` | Manual perf/progress harness only — not shipped |
 
-Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions live in `Directory.Packages.props`. GitLab CI builds, tests, and publishes on tags (`.gitlab-ci.yml`).
+Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions live in `Directory.Packages.props`. CI is defined in `.gitlab-ci.yml` (GitLab) and `.github/workflows/` (GitHub Actions); both require Windows runners.
 
 ## Core data flow
 
@@ -33,8 +33,8 @@ Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions li
 Requires the **.NET 10 SDK** (pinned in `global.json`). SDK-style projects target `net10.0-windows`.
 
 ```powershell
-dotnet restore SizeScanner.sln
-dotnet build SizeScanner.sln -c Debug
+dotnet restore SizeScanner.slnx
+dotnet build SizeScanner.slnx -c Debug
 dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release
 dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
 
@@ -53,7 +53,12 @@ dotnet publish .\ScannerUiWinForms\ScannerUiWinForms.csproj -c Release -r win-x6
 
 ## CI and release
 
-`.gitlab-ci.yml` runs on **Windows** GitLab runners (`tags: [windows]`): restore/build, `dotnet test ScannerCore.Tests`, and on git tags publishes `ScannerUiWinForms` to `publish/` artifacts.
+| Platform | File(s) | Release trigger |
+|----------|---------|-----------------|
+| GitLab | `.gitlab-ci.yml` | Any git tag → `publish/` artifact (`tags: [windows]`) |
+| GitHub | `.github/workflows/dotnet-desktop.yml`, `release.yml`, `codeql.yml` | Tag matching `v*` → GitHub Release with zip |
+
+Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tests` with coverlet, publish self-contained `win-x64` (`--self-contained true`). GitHub release workflow uses `fetch-depth: 0` / GitLab `GIT_DEPTH: "0"` so MinVer can resolve versions from git history.
 
 ## Conventions when editing
 
