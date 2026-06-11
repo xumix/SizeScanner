@@ -263,7 +263,9 @@ namespace ScannerUiWinForms
             }
             else
             {
-                ApplySliceStyle(AddPoint(series, size, PlaceholderTag), Color.FloralWhite);
+                var point = AddPoint(series, size, PlaceholderTag);
+                point.Color = Color.FloralWhite;
+                point.BorderWidth = 0;
             }
         }
 
@@ -408,9 +410,14 @@ namespace ScannerUiWinForms
         private IList<HitTestResult> _lastObjects;
         private string _lastTip;
         private string _chartToolTipText = string.Empty;
+        private Point _pendingToolTipLocation;
+        private bool _chartToolTipVisible;
 
         private void usageChart_MouseMove(object sender, MouseEventArgs e)
         {
+            if (chartContextMenu.Visible)
+                return;
+
             if (_last == e.Location) return;
             _last = e.Location;
 
@@ -422,6 +429,7 @@ namespace ScannerUiWinForms
                 {
                     _lastObjects = objectUnder;
                     BuildToolTipText();
+                    CancelChartToolTip();
                 }
                 if (!IsScanning)
                 {
@@ -429,11 +437,11 @@ namespace ScannerUiWinForms
                     SetStatusDetails(BuildFullPath(fsItems));
                 }
                 var offset = LogicalToDeviceUnits(_cursorSize/2);
-                ShowChartToolTip(_lastTip, usageChart, (int)(e.X + offset*0.75), e.Y + offset);
+                ScheduleChartToolTip(_lastTip, (int)(e.X + offset*0.75), e.Y + offset);
             }
             else
             {
-                chartToolTip.Hide(usageChart);
+                CancelChartToolTip();
                 if (!IsScanning)
                     SetStatusDetails(string.Empty);
             }
@@ -441,6 +449,7 @@ namespace ScannerUiWinForms
 
         private void usageChart_MouseLeave(object sender, EventArgs e)
         {
+            CancelChartToolTip();
             if (!IsScanning)
                 SetStatusDetails(string.Empty);
         }
@@ -477,16 +486,44 @@ namespace ScannerUiWinForms
             e.ToolTipSize = MeasureChartToolTip(_chartToolTipText);
         }
 
+        private void ScheduleChartToolTip(string text, int x, int y)
+        {
+            if (_chartToolTipVisible)
+                return;
+
+            _chartToolTipText = text ?? string.Empty;
+            _pendingToolTipLocation = new Point(x, y);
+            chartToolTipTimer.Stop();
+            chartToolTipTimer.Start();
+        }
+
+        private void chartToolTipTimer_Tick(object sender, EventArgs e)
+        {
+            chartToolTipTimer.Stop();
+            ShowChartToolTip(_chartToolTipText, usageChart, _pendingToolTipLocation);
+        }
+
+        private void CancelChartToolTip()
+        {
+            chartToolTipTimer.Stop();
+            chartToolTip.Hide(usageChart);
+            _chartToolTipVisible = false;
+        }
+
         private void ShowChartToolTip(string text, Control control, int x, int y)
         {
+            chartToolTipTimer.Stop();
             _chartToolTipText = text ?? string.Empty;
             chartToolTip.Show(_chartToolTipText, control, x, y);
+            _chartToolTipVisible = true;
         }
 
         private void ShowChartToolTip(string text, Control control, Point point)
         {
+            chartToolTipTimer.Stop();
             _chartToolTipText = text ?? string.Empty;
             chartToolTip.Show(_chartToolTipText, control, point);
+            _chartToolTipVisible = true;
         }
 
         private Size MeasureChartToolTip(string text)
@@ -604,6 +641,11 @@ namespace ScannerUiWinForms
             {
                 MessageBox.Show("Error occurred: " + ex);
             }
+        }
+
+        private void chartContextMenu_Closed(object sender, ToolStripDropDownClosedEventArgs e)
+        {
+            _last = Point.Empty;
         }
 
         private void chartContextMenu_Opened(object sender, EventArgs e)

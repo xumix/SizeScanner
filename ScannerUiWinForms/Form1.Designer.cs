@@ -44,6 +44,7 @@
             this.toggleInaccessiblePaneButton = new System.Windows.Forms.Button();
             this.toggleInaccessiblePaneButtonHost = new System.Windows.Forms.ToolStripControlHost(this.toggleInaccessiblePaneButton);
             this.scanProgressTimer = new System.Windows.Forms.Timer(this.components);
+            this.chartToolTipTimer = new System.Windows.Forms.Timer(this.components);
             this.mainSplitContainer = new System.Windows.Forms.SplitContainer();
             this.usageChart = new System.Windows.Forms.DataVisualization.Charting.Chart();
             this.chartContextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
@@ -180,6 +181,11 @@
             this.scanProgressTimer.Interval = 300;
             this.scanProgressTimer.Tick += new System.EventHandler(this.scanProgressTimer_Tick);
             // 
+            // chartToolTipTimer
+            // 
+            this.chartToolTipTimer.Interval = 100;
+            this.chartToolTipTimer.Tick += new System.EventHandler(this.chartToolTipTimer_Tick);
+            // 
             // mainSplitContainer
             // 
             this.mainSplitContainer.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -228,6 +234,7 @@
             this.deleteMenuItem});
             this.chartContextMenu.Name = "chartContextMenu";
             this.chartContextMenu.Size = new System.Drawing.Size(135, 68);
+            this.chartContextMenu.Closed += new System.Windows.Forms.ToolStripDropDownClosedEventHandler(this.chartContextMenu_Closed);
             this.chartContextMenu.Opened += new System.EventHandler(this.chartContextMenu_Opened);
             // 
             // showInExplorerMenuItem
@@ -385,6 +392,7 @@
         private System.Windows.Forms.ToolStripSeparator toolStripSeparatorAfterScan;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparatorBeforePane;
         private System.Windows.Forms.Timer scanProgressTimer;
+        private System.Windows.Forms.Timer chartToolTipTimer;
         private System.Windows.Forms.SplitContainer mainSplitContainer;
         private System.Windows.Forms.ListBox inaccessibleListBox;
         private System.Windows.Forms.DataVisualization.Charting.Chart usageChart;
