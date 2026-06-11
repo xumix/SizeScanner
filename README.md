@@ -2,7 +2,7 @@
 
 A Windows disk-usage visualizer inspired by [Steffen Gerlach's Scanner](http://www.steffengerlach.de/freeware/). Pick a drive or folder, wait for the scan, and explore where space goes through nested doughnut charts.
 
-![](https://raw.githubusercontent.com/AgentMC/SizeScanner/master/Img/SSSS01.png)
+![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/SSSS01.png)
 
 ## What it does
 
