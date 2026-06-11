@@ -86,7 +86,7 @@
             this.mainToolStrip.Name = "mainToolStrip";
             this.mainToolStrip.Padding = new System.Windows.Forms.Padding(6, 4, 6, 4);
             this.mainToolStrip.RenderMode = System.Windows.Forms.ToolStripRenderMode.System;
-            this.mainToolStrip.Size = new System.Drawing.Size(1054, 46);
+            this.mainToolStrip.Size = new System.Drawing.Size(1581, 46);
             this.mainToolStrip.TabIndex = 0;
             this.mainToolStrip.Text = "mainToolStrip";
             // 
@@ -197,8 +197,8 @@
             this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleListBox);
             this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleHeaderPanel);
             this.mainSplitContainer.Panel2MinSize = 0;
-            this.mainSplitContainer.Size = new System.Drawing.Size(1054, 570);
-            this.mainSplitContainer.SplitterDistance = 769;
+            this.mainSplitContainer.Size = new System.Drawing.Size(1581, 855);
+            this.mainSplitContainer.SplitterDistance = 1154;
             this.mainSplitContainer.SplitterWidth = 6;
             this.mainSplitContainer.TabIndex = 1;
             // 
@@ -214,7 +214,7 @@
             series1.ChartArea = "ChartArea1";
             series1.Name = "Series1";
             this.usageChart.Series.Add(series1);
-            this.usageChart.Size = new System.Drawing.Size(769, 570);
+            this.usageChart.Size = new System.Drawing.Size(1154, 855);
             this.usageChart.TabIndex = 0;
             this.usageChart.Text = "usageChart";
             this.usageChart.MouseMove += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseMove);
@@ -252,7 +252,7 @@
             this.inaccessibleListBox.Location = new System.Drawing.Point(0, 20);
             this.inaccessibleListBox.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
             this.inaccessibleListBox.Name = "inaccessibleListBox";
-            this.inaccessibleListBox.Size = new System.Drawing.Size(279, 550);
+            this.inaccessibleListBox.Size = new System.Drawing.Size(421, 825);
             this.inaccessibleListBox.TabIndex = 0;
             // 
             // inaccessibleHeaderPanel
@@ -267,7 +267,7 @@
             this.inaccessibleHeaderPanel.Location = new System.Drawing.Point(0, 0);
             this.inaccessibleHeaderPanel.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
             this.inaccessibleHeaderPanel.Name = "inaccessibleHeaderPanel";
-            this.inaccessibleHeaderPanel.Size = new System.Drawing.Size(279, 20);
+            this.inaccessibleHeaderPanel.Size = new System.Drawing.Size(421, 20);
             this.inaccessibleHeaderPanel.TabIndex = 3;
             // 
             // inaccessibleHeaderPrefixLabel
@@ -325,10 +325,10 @@
             this.mainStatusStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripStatusLabelStatus,
             this.toolStripStatusLabelDetails});
-            this.mainStatusStrip.Location = new System.Drawing.Point(0, 590);
+            this.mainStatusStrip.Location = new System.Drawing.Point(0, 886);
             this.mainStatusStrip.Name = "mainStatusStrip";
             this.mainStatusStrip.Padding = new System.Windows.Forms.Padding(2, 0, 21, 0);
-            this.mainStatusStrip.Size = new System.Drawing.Size(1054, 26);
+            this.mainStatusStrip.Size = new System.Drawing.Size(1581, 26);
             this.mainStatusStrip.SizingGrip = false;
             this.mainStatusStrip.TabIndex = 2;
             this.mainStatusStrip.Text = "mainStatusStrip";
@@ -342,7 +342,7 @@
             // toolStripStatusLabelDetails
             // 
             this.toolStripStatusLabelDetails.Name = "toolStripStatusLabelDetails";
-            this.toolStripStatusLabelDetails.Size = new System.Drawing.Size(977, 19);
+            this.toolStripStatusLabelDetails.Size = new System.Drawing.Size(1466, 19);
             this.toolStripStatusLabelDetails.Spring = true;
             this.toolStripStatusLabelDetails.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
@@ -350,7 +350,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 20F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(1054, 608);
+            this.ClientSize = new System.Drawing.Size(1581, 912);
             this.Controls.Add(this.mainSplitContainer);
             this.Controls.Add(this.mainStatusStrip);
             this.Controls.Add(this.mainToolStrip);

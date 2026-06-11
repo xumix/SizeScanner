@@ -213,8 +213,9 @@ namespace ScannerUiWinForms
         }
 
         private readonly Dictionary<Series, long> _totals = new Dictionary<Series, long>();
+        private static readonly Color SliceBorderColor = Color.FromArgb(64, 0, 0, 0);
 
-        private void LoadChartDataCollection(int dataLevel, FsItem dataPoint, long precedingObjectSize)
+        private void LoadChartDataCollection(int dataLevel, FsItem dataPoint, long precedingObjectSize, Color? parentColor = null)
         {
             Series ser;
             if (!TryGetDataSeries(dataLevel, dataPoint, out ser)) return;
@@ -228,11 +229,17 @@ namespace ScannerUiWinForms
                 }
             }
 
-            foreach (var point in dataPoint.Items)
+            var siblingCount = dataPoint.Items.Count;
+            for (var siblingIndex = 0; siblingIndex < siblingCount; siblingIndex++)
             {
+                var point = dataPoint.Items[siblingIndex];
+                var itemColor = parentColor == null
+                    ? GetLevelBaseColor(siblingIndex, siblingCount)
+                    : GetChildShade(parentColor.Value, siblingIndex, siblingCount);
+
                 if (point.Size > _filterThreshold)
                 {
-                    AddPoint(ser, point.Size, point);
+                    ApplySliceStyle(AddPoint(ser, point.Size, point), itemColor);
                 }
                 else
                 {
@@ -240,7 +247,7 @@ namespace ScannerUiWinForms
                 }
                 if (point.Items != null && point.Items.Count > 0)
                 {
-                    LoadChartDataCollection(dataLevel + 1, point, precedingObjectSize);
+                    LoadChartDataCollection(dataLevel + 1, point, precedingObjectSize, itemColor);
                 }
                 precedingObjectSize += point.Size;
             }
@@ -256,9 +263,67 @@ namespace ScannerUiWinForms
             }
             else
             {
-                var point = AddPoint(series, size, PlaceholderTag);
-                point.Color = Color.FloralWhite;
+                ApplySliceStyle(AddPoint(series, size, PlaceholderTag), Color.FloralWhite);
             }
+        }
+
+        private static void ApplySliceStyle(DataPoint point, Color fillColor)
+        {
+            point.Color = fillColor;
+            point.BorderWidth = 1;
+            point.BorderColor = SliceBorderColor;
+        }
+
+        private static Color GetLevelBaseColor(int siblingIndex, int siblingCount)
+        {
+            var hue = siblingCount <= 1 ? 0f : 360f * siblingIndex / siblingCount;
+            return ColorFromHsb(hue, 0.95f, 0.68f);
+        }
+
+        private static Color GetChildShade(Color parentColor, int siblingIndex, int siblingCount)
+        {
+            var hue = parentColor.GetHue();
+            var saturation = parentColor.GetSaturation();
+            if (siblingCount <= 1)
+                return ColorFromHsb(hue, saturation, parentColor.GetBrightness());
+
+            const float minBrightness = 0.38f;
+            const float maxBrightness = 0.92f;
+            var brightness = minBrightness + (maxBrightness - minBrightness) * siblingIndex / (siblingCount - 1);
+            return ColorFromHsb(hue, saturation, brightness);
+        }
+
+        private static Color ColorFromHsb(float hue, float saturation, float brightness)
+        {
+            if (saturation <= 0)
+            {
+                var gray = (int)Math.Round(brightness * 255);
+                return Color.FromArgb(gray, gray, gray);
+            }
+
+            hue = (hue % 360 + 360) % 360;
+            var h = hue / 60f;
+            var i = (int)Math.Floor(h);
+            var f = h - i;
+            var p = brightness * (1 - saturation);
+            var q = brightness * (1 - saturation * f);
+            var t = brightness * (1 - saturation * (1 - f));
+
+            float r, g, b;
+            switch (i % 6)
+            {
+                case 0: r = brightness; g = t; b = p; break;
+                case 1: r = q; g = brightness; b = p; break;
+                case 2: r = p; g = brightness; b = t; break;
+                case 3: r = p; g = q; b = brightness; break;
+                case 4: r = t; g = p; b = brightness; break;
+                default: r = brightness; g = p; b = q; break;
+            }
+
+            return Color.FromArgb(
+                (int)Math.Round(r * 255),
+                (int)Math.Round(g * 255),
+                (int)Math.Round(b * 255));
         }
 
         private DataPoint AddPoint(Series series, long size, object tag)
@@ -305,7 +370,9 @@ namespace ScannerUiWinForms
                 {
                     ChartArea = ca.Name,
                     ChartType = SeriesChartType.Doughnut,
-                    IsXValueIndexed = true
+                    IsXValueIndexed = true,
+                    BorderWidth = 1,
+                    BorderColor = SliceBorderColor
                 };
                 usageChart.Series.Add(ser);
                 _totals.Add(ser, 0);

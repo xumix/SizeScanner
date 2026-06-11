@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <SupportedOSPlatform>windows</SupportedOSPlatform>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>ScannerUiWinForms</RootNamespace>
     <AssemblyName>ScannerUiWinForms</AssemblyName>
