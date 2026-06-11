@@ -32,78 +32,82 @@
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
             System.Windows.Forms.DataVisualization.Charting.ChartArea chartArea1 = new System.Windows.Forms.DataVisualization.Charting.ChartArea();
             System.Windows.Forms.DataVisualization.Charting.Series series1 = new System.Windows.Forms.DataVisualization.Charting.Series();
-            this.toolStrip1 = new System.Windows.Forms.ToolStrip();
-            this.toolStripProgressBar1 = new System.Windows.Forms.ToolStripProgressBar();
-            this.toolStripComboBox1 = new System.Windows.Forms.ToolStripComboBox();
-            this.toolStripLabel1 = new System.Windows.Forms.ToolStripLabel();
-            this.toolStripComboBox2 = new System.Windows.Forms.ToolStripComboBox();
-            this.toolStripButton1 = new System.Windows.Forms.ToolStripButton();
-            this.timer1 = new System.Windows.Forms.Timer(this.components);
-            this.splitContainer1 = new System.Windows.Forms.SplitContainer();
-            this.chart1 = new System.Windows.Forms.DataVisualization.Charting.Chart();
-            this.contextMenuStrip1 = new System.Windows.Forms.ContextMenuStrip(this.components);
-            this.openToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.deleteToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.listBox1 = new System.Windows.Forms.ListBox();
-            this.flowLayoutPanel1 = new System.Windows.Forms.FlowLayoutPanel();
-            this.label1 = new System.Windows.Forms.Label();
-            this.label2 = new System.Windows.Forms.Label();
-            this.label3 = new System.Windows.Forms.Label();
-            this.toolTip1 = new System.Windows.Forms.ToolTip(this.components);
-            this.toolStripLabel2 = new System.Windows.Forms.ToolStripLabel();
-            this.toolStrip1.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit();
-            this.splitContainer1.Panel1.SuspendLayout();
-            this.splitContainer1.Panel2.SuspendLayout();
-            this.splitContainer1.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.chart1)).BeginInit();
-            this.contextMenuStrip1.SuspendLayout();
-            this.flowLayoutPanel1.SuspendLayout();
+            this.mainToolStrip = new System.Windows.Forms.ToolStrip();
+            this.scanProgressBar = new System.Windows.Forms.ToolStripProgressBar();
+            this.freeSpaceComboBox = new System.Windows.Forms.ToolStripComboBox();
+            this.filterLabel = new System.Windows.Forms.ToolStripLabel();
+            this.filterThresholdComboBox = new System.Windows.Forms.ToolStripComboBox();
+            this.toggleInaccessiblePaneButton = new System.Windows.Forms.ToolStripButton();
+            this.scanProgressTimer = new System.Windows.Forms.Timer(this.components);
+            this.mainSplitContainer = new System.Windows.Forms.SplitContainer();
+            this.usageChart = new System.Windows.Forms.DataVisualization.Charting.Chart();
+            this.chartContextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
+            this.showInExplorerMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.deleteMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.inaccessibleListBox = new System.Windows.Forms.ListBox();
+            this.inaccessibleHeaderPanel = new System.Windows.Forms.FlowLayoutPanel();
+            this.inaccessibleHeaderPrefixLabel = new System.Windows.Forms.Label();
+            this.inaccessibleTotalSizeLabel = new System.Windows.Forms.Label();
+            this.inaccessibleHeaderSuffixLabel = new System.Windows.Forms.Label();
+            this.relaunchAsAdminButton = new System.Windows.Forms.Button();
+            this.chartToolTip = new System.Windows.Forms.ToolTip(this.components);
+            this.mainStatusStrip = new System.Windows.Forms.StatusStrip();
+            this.toolStripStatusLabelStatus = new System.Windows.Forms.ToolStripStatusLabel();
+            this.toolStripStatusLabelDetails = new System.Windows.Forms.ToolStripStatusLabel();
+            this.mainToolStrip.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.mainSplitContainer)).BeginInit();
+            this.mainSplitContainer.Panel1.SuspendLayout();
+            this.mainSplitContainer.Panel2.SuspendLayout();
+            this.mainSplitContainer.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.usageChart)).BeginInit();
+            this.chartContextMenu.SuspendLayout();
+            this.inaccessibleHeaderPanel.SuspendLayout();
+            this.mainStatusStrip.SuspendLayout();
             this.SuspendLayout();
             // 
-            // toolStrip1
+            // mainToolStrip
             // 
-            this.toolStrip1.ImageScalingSize = new System.Drawing.Size(24, 24);
-            this.toolStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.toolStripProgressBar1,
-            this.toolStripComboBox1,
-            this.toolStripLabel1,
-            this.toolStripComboBox2,
-            this.toolStripButton1,
-            this.toolStripLabel2});
-            this.toolStrip1.Location = new System.Drawing.Point(0, 0);
-            this.toolStrip1.Name = "toolStrip1";
-            this.toolStrip1.Padding = new System.Windows.Forms.Padding(0, 0, 3, 0);
-            this.toolStrip1.Size = new System.Drawing.Size(1054, 38);
-            this.toolStrip1.TabIndex = 0;
-            this.toolStrip1.Text = "toolStrip1";
+            this.mainToolStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
+            this.mainToolStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.scanProgressBar,
+            this.freeSpaceComboBox,
+            this.filterLabel,
+            this.filterThresholdComboBox,
+            this.toggleInaccessiblePaneButton});
+            this.mainToolStrip.Location = new System.Drawing.Point(0, 0);
+            this.mainToolStrip.Name = "mainToolStrip";
+            this.mainToolStrip.Padding = new System.Windows.Forms.Padding(0, 0, 3, 0);
+            this.mainToolStrip.Size = new System.Drawing.Size(1054, 38);
+            this.mainToolStrip.TabIndex = 0;
+            this.mainToolStrip.Text = "mainToolStrip";
             // 
-            // toolStripProgressBar1
+            // scanProgressBar
             // 
-            this.toolStripProgressBar1.Maximum = 1000;
-            this.toolStripProgressBar1.Name = "toolStripProgressBar1";
-            this.toolStripProgressBar1.Size = new System.Drawing.Size(450, 33);
+            this.scanProgressBar.Maximum = 1000;
+            this.scanProgressBar.Name = "scanProgressBar";
+            this.scanProgressBar.Size = new System.Drawing.Size(450, 33);
             // 
-            // toolStripComboBox1
+            // freeSpaceComboBox
             // 
-            this.toolStripComboBox1.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.toolStripComboBox1.Items.AddRange(new object[] {
+            this.freeSpaceComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.freeSpaceComboBox.Items.AddRange(new object[] {
             "Show free space",
             "Hide free space"});
-            this.toolStripComboBox1.Name = "toolStripComboBox1";
-            this.toolStripComboBox1.Size = new System.Drawing.Size(163, 38);
+            this.freeSpaceComboBox.Name = "freeSpaceComboBox";
+            this.freeSpaceComboBox.Size = new System.Drawing.Size(163, 38);
+            this.freeSpaceComboBox.SelectedIndexChanged += new System.EventHandler(this.DisplayOptionsChanged);
             // 
-            // toolStripLabel1
+            // filterLabel
             // 
-            this.toolStripLabel1.Name = "toolStripLabel1";
-            this.toolStripLabel1.Size = new System.Drawing.Size(54, 33);
-            this.toolStripLabel1.Text = "Filter:";
+            this.filterLabel.Name = "filterLabel";
+            this.filterLabel.Size = new System.Drawing.Size(54, 33);
+            this.filterLabel.Text = "Filter:";
             // 
-            // toolStripComboBox2
+            // filterThresholdComboBox
             // 
-            this.toolStripComboBox2.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.toolStripComboBox2.DropDownWidth = 120;
-            this.toolStripComboBox2.Items.AddRange(new object[] {
+            this.filterThresholdComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.filterThresholdComboBox.DropDownWidth = 120;
+            this.filterThresholdComboBox.Items.AddRange(new object[] {
             "No threshold (SLOW!)",
             "0.25% (Slower)",
             "0.5%",
@@ -113,169 +117,209 @@
             "1.5%",
             "1.75% (Rougher)",
             "2% (ROUGH!)"});
-            this.toolStripComboBox2.Name = "toolStripComboBox2";
-            this.toolStripComboBox2.Size = new System.Drawing.Size(110, 38);
+            this.filterThresholdComboBox.Name = "filterThresholdComboBox";
+            this.filterThresholdComboBox.Size = new System.Drawing.Size(110, 38);
+            this.filterThresholdComboBox.SelectedIndexChanged += new System.EventHandler(this.DisplayOptionsChanged);
             // 
-            // toolStripButton1
+            // toggleInaccessiblePaneButton
             // 
-            this.toolStripButton1.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
-            this.toolStripButton1.Image = ((System.Drawing.Image)(resources.GetObject("toolStripButton1.Image")));
-            this.toolStripButton1.ImageTransparentColor = System.Drawing.Color.Magenta;
-            this.toolStripButton1.Name = "toolStripButton1";
-            this.toolStripButton1.Size = new System.Drawing.Size(34, 33);
-            this.toolStripButton1.Text = "[]||";
-            this.toolStripButton1.ToolTipText = "Show/Hide Inaccessible Objects Pane";
-            this.toolStripButton1.Click += new System.EventHandler(this.toolStripButton1_Click);
+            this.toggleInaccessiblePaneButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+            this.toggleInaccessiblePaneButton.Image = ((System.Drawing.Image)(resources.GetObject("toggleInaccessiblePaneButton.Image")));
+            this.toggleInaccessiblePaneButton.ImageTransparentColor = System.Drawing.Color.Magenta;
+            this.toggleInaccessiblePaneButton.Name = "toggleInaccessiblePaneButton";
+            this.toggleInaccessiblePaneButton.Size = new System.Drawing.Size(34, 33);
+            this.toggleInaccessiblePaneButton.Text = "[]||";
+            this.toggleInaccessiblePaneButton.ToolTipText = "Show/Hide Inaccessible Objects Pane";
+            this.toggleInaccessiblePaneButton.Click += new System.EventHandler(this.toggleInaccessiblePaneButton_Click);
             // 
-            // timer1
+            // scanProgressTimer
             // 
-            this.timer1.Interval = 300;
-            this.timer1.Tick += new System.EventHandler(this.timer1_Tick);
+            this.scanProgressTimer.Interval = 300;
+            this.scanProgressTimer.Tick += new System.EventHandler(this.scanProgressTimer_Tick);
             // 
-            // splitContainer1
+            // mainSplitContainer
             // 
-            this.splitContainer1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.splitContainer1.FixedPanel = System.Windows.Forms.FixedPanel.Panel2;
-            this.splitContainer1.Location = new System.Drawing.Point(0, 38);
-            this.splitContainer1.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
-            this.splitContainer1.Name = "splitContainer1";
+            this.mainSplitContainer.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.mainSplitContainer.FixedPanel = System.Windows.Forms.FixedPanel.Panel2;
+            this.mainSplitContainer.Location = new System.Drawing.Point(0, 38);
+            this.mainSplitContainer.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
+            this.mainSplitContainer.Name = "mainSplitContainer";
             // 
-            // splitContainer1.Panel1
+            // mainSplitContainer.Panel1
             // 
-            this.splitContainer1.Panel1.Controls.Add(this.chart1);
+            this.mainSplitContainer.Panel1.Controls.Add(this.usageChart);
             // 
-            // splitContainer1.Panel2
+            // mainSplitContainer.Panel2
             // 
-            this.splitContainer1.Panel2.Controls.Add(this.listBox1);
-            this.splitContainer1.Panel2.Controls.Add(this.flowLayoutPanel1);
-            this.splitContainer1.Panel2MinSize = 0;
-            this.splitContainer1.Size = new System.Drawing.Size(1054, 570);
-            this.splitContainer1.SplitterDistance = 769;
-            this.splitContainer1.SplitterWidth = 6;
-            this.splitContainer1.TabIndex = 1;
+            this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleListBox);
+            this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleHeaderPanel);
+            this.mainSplitContainer.Panel2MinSize = 0;
+            this.mainSplitContainer.Size = new System.Drawing.Size(1054, 570);
+            this.mainSplitContainer.SplitterDistance = 769;
+            this.mainSplitContainer.SplitterWidth = 6;
+            this.mainSplitContainer.TabIndex = 1;
             // 
-            // chart1
+            // usageChart
             // 
             chartArea1.Name = "ChartArea1";
-            this.chart1.ChartAreas.Add(chartArea1);
-            this.chart1.ContextMenuStrip = this.contextMenuStrip1;
-            this.chart1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.chart1.Location = new System.Drawing.Point(0, 0);
-            this.chart1.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
-            this.chart1.Name = "chart1";
+            this.usageChart.ChartAreas.Add(chartArea1);
+            this.usageChart.ContextMenuStrip = this.chartContextMenu;
+            this.usageChart.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.usageChart.Location = new System.Drawing.Point(0, 0);
+            this.usageChart.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
+            this.usageChart.Name = "usageChart";
             series1.ChartArea = "ChartArea1";
             series1.Name = "Series1";
-            this.chart1.Series.Add(series1);
-            this.chart1.Size = new System.Drawing.Size(769, 570);
-            this.chart1.TabIndex = 0;
-            this.chart1.Text = "chart1";
-            this.chart1.MouseMove += new System.Windows.Forms.MouseEventHandler(this.chart1_MouseMove);
+            this.usageChart.Series.Add(series1);
+            this.usageChart.Size = new System.Drawing.Size(769, 570);
+            this.usageChart.TabIndex = 0;
+            this.usageChart.Text = "usageChart";
+            this.usageChart.MouseMove += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseMove);
+            this.usageChart.MouseLeave += new System.EventHandler(this.usageChart_MouseLeave);
             // 
-            // contextMenuStrip1
+            // chartContextMenu
             // 
-            this.contextMenuStrip1.ImageScalingSize = new System.Drawing.Size(24, 24);
-            this.contextMenuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.openToolStripMenuItem,
-            this.deleteToolStripMenuItem});
-            this.contextMenuStrip1.Name = "contextMenuStrip1";
-            this.contextMenuStrip1.Size = new System.Drawing.Size(135, 68);
-            this.contextMenuStrip1.Opened += new System.EventHandler(this.contextMenuStrip1_Opened);
+            this.chartContextMenu.ImageScalingSize = new System.Drawing.Size(24, 24);
+            this.chartContextMenu.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.showInExplorerMenuItem,
+            this.deleteMenuItem});
+            this.chartContextMenu.Name = "chartContextMenu";
+            this.chartContextMenu.Size = new System.Drawing.Size(135, 68);
+            this.chartContextMenu.Opened += new System.EventHandler(this.chartContextMenu_Opened);
             // 
-            // openToolStripMenuItem
+            // showInExplorerMenuItem
             // 
-            this.openToolStripMenuItem.Name = "openToolStripMenuItem";
-            this.openToolStripMenuItem.Size = new System.Drawing.Size(134, 32);
-            this.openToolStripMenuItem.Text = "Show";
-            this.openToolStripMenuItem.Click += new System.EventHandler(this.openToolStripMenuItem_Click);
+            this.showInExplorerMenuItem.Name = "showInExplorerMenuItem";
+            this.showInExplorerMenuItem.Size = new System.Drawing.Size(134, 32);
+            this.showInExplorerMenuItem.Text = "Show";
+            this.showInExplorerMenuItem.Click += new System.EventHandler(this.showInExplorerMenuItem_Click);
             // 
-            // deleteToolStripMenuItem
+            // deleteMenuItem
             // 
-            this.deleteToolStripMenuItem.Name = "deleteToolStripMenuItem";
-            this.deleteToolStripMenuItem.Size = new System.Drawing.Size(134, 32);
-            this.deleteToolStripMenuItem.Text = "Delete";
-            this.deleteToolStripMenuItem.Click += new System.EventHandler(this.deleteToolStripMenuItem_Click);
+            this.deleteMenuItem.Name = "deleteMenuItem";
+            this.deleteMenuItem.Size = new System.Drawing.Size(134, 32);
+            this.deleteMenuItem.Text = "Delete";
+            this.deleteMenuItem.Click += new System.EventHandler(this.deleteMenuItem_Click);
             // 
-            // listBox1
+            // inaccessibleListBox
             // 
-            this.listBox1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.listBox1.FormattingEnabled = true;
-            this.listBox1.ItemHeight = 20;
-            this.listBox1.Location = new System.Drawing.Point(0, 20);
-            this.listBox1.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
-            this.listBox1.Name = "listBox1";
-            this.listBox1.Size = new System.Drawing.Size(279, 550);
-            this.listBox1.TabIndex = 0;
+            this.inaccessibleListBox.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.inaccessibleListBox.FormattingEnabled = true;
+            this.inaccessibleListBox.ItemHeight = 20;
+            this.inaccessibleListBox.Location = new System.Drawing.Point(0, 20);
+            this.inaccessibleListBox.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
+            this.inaccessibleListBox.Name = "inaccessibleListBox";
+            this.inaccessibleListBox.Size = new System.Drawing.Size(279, 550);
+            this.inaccessibleListBox.TabIndex = 0;
             // 
-            // flowLayoutPanel1
+            // inaccessibleHeaderPanel
             // 
-            this.flowLayoutPanel1.AutoSize = true;
-            this.flowLayoutPanel1.Controls.Add(this.label1);
-            this.flowLayoutPanel1.Controls.Add(this.label2);
-            this.flowLayoutPanel1.Controls.Add(this.label3);
-            this.flowLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Top;
-            this.flowLayoutPanel1.Location = new System.Drawing.Point(0, 0);
-            this.flowLayoutPanel1.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
-            this.flowLayoutPanel1.Name = "flowLayoutPanel1";
-            this.flowLayoutPanel1.Size = new System.Drawing.Size(279, 20);
-            this.flowLayoutPanel1.TabIndex = 3;
+            this.inaccessibleHeaderPanel.AutoSize = true;
+            this.inaccessibleHeaderPanel.Controls.Add(this.inaccessibleHeaderPrefixLabel);
+            this.inaccessibleHeaderPanel.Controls.Add(this.inaccessibleTotalSizeLabel);
+            this.inaccessibleHeaderPanel.Controls.Add(this.inaccessibleHeaderSuffixLabel);
+            this.inaccessibleHeaderPanel.Controls.Add(this.relaunchAsAdminButton);
+            this.inaccessibleHeaderPanel.Dock = System.Windows.Forms.DockStyle.Top;
+            this.inaccessibleHeaderPanel.Location = new System.Drawing.Point(0, 0);
+            this.inaccessibleHeaderPanel.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
+            this.inaccessibleHeaderPanel.Name = "inaccessibleHeaderPanel";
+            this.inaccessibleHeaderPanel.Size = new System.Drawing.Size(279, 20);
+            this.inaccessibleHeaderPanel.TabIndex = 3;
             // 
-            // label1
+            // inaccessibleHeaderPrefixLabel
             // 
-            this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(0, 0);
-            this.label1.Margin = new System.Windows.Forms.Padding(0);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(196, 20);
-            this.label1.TabIndex = 1;
-            this.label1.Text = "Inaccessible objects ( total";
+            this.inaccessibleHeaderPrefixLabel.AutoSize = true;
+            this.inaccessibleHeaderPrefixLabel.Location = new System.Drawing.Point(0, 0);
+            this.inaccessibleHeaderPrefixLabel.Margin = new System.Windows.Forms.Padding(0);
+            this.inaccessibleHeaderPrefixLabel.Name = "inaccessibleHeaderPrefixLabel";
+            this.inaccessibleHeaderPrefixLabel.Size = new System.Drawing.Size(196, 20);
+            this.inaccessibleHeaderPrefixLabel.TabIndex = 1;
+            this.inaccessibleHeaderPrefixLabel.Text = "Inaccessible objects ( total";
             // 
-            // label2
+            // inaccessibleTotalSizeLabel
             // 
-            this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(196, 0);
-            this.label2.Margin = new System.Windows.Forms.Padding(0);
-            this.label2.Name = "label2";
-            this.label2.Size = new System.Drawing.Size(62, 20);
-            this.label2.TabIndex = 4;
-            this.label2.Text = "0 Bytes";
+            this.inaccessibleTotalSizeLabel.AutoSize = true;
+            this.inaccessibleTotalSizeLabel.Location = new System.Drawing.Point(196, 0);
+            this.inaccessibleTotalSizeLabel.Margin = new System.Windows.Forms.Padding(0);
+            this.inaccessibleTotalSizeLabel.Name = "inaccessibleTotalSizeLabel";
+            this.inaccessibleTotalSizeLabel.Size = new System.Drawing.Size(62, 20);
+            this.inaccessibleTotalSizeLabel.TabIndex = 4;
+            this.inaccessibleTotalSizeLabel.Text = "0 Bytes";
             // 
-            // label3
+            // inaccessibleHeaderSuffixLabel
             // 
-            this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(258, 0);
-            this.label3.Margin = new System.Windows.Forms.Padding(0);
-            this.label3.Name = "label3";
-            this.label3.Size = new System.Drawing.Size(18, 20);
-            this.label3.TabIndex = 5;
-            this.label3.Text = "):";
+            this.inaccessibleHeaderSuffixLabel.AutoSize = true;
+            this.inaccessibleHeaderSuffixLabel.Location = new System.Drawing.Point(258, 0);
+            this.inaccessibleHeaderSuffixLabel.Margin = new System.Windows.Forms.Padding(0);
+            this.inaccessibleHeaderSuffixLabel.Name = "inaccessibleHeaderSuffixLabel";
+            this.inaccessibleHeaderSuffixLabel.Size = new System.Drawing.Size(18, 20);
+            this.inaccessibleHeaderSuffixLabel.TabIndex = 5;
+            this.inaccessibleHeaderSuffixLabel.Text = "):";
             // 
-            // toolStripLabel2
+            // relaunchAsAdminButton
             // 
-            this.toolStripLabel2.Name = "toolStripLabel2";
-            this.toolStripLabel2.Size = new System.Drawing.Size(0, 33);
+            this.relaunchAsAdminButton.AutoSize = true;
+            this.relaunchAsAdminButton.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
+            this.relaunchAsAdminButton.Name = "relaunchAsAdminButton";
+            this.relaunchAsAdminButton.Size = new System.Drawing.Size(198, 30);
+            this.relaunchAsAdminButton.TabIndex = 6;
+            this.relaunchAsAdminButton.Text = "Relaunch as administrator";
+            this.relaunchAsAdminButton.UseVisualStyleBackColor = true;
+            this.relaunchAsAdminButton.Visible = false;
+            this.relaunchAsAdminButton.Click += new System.EventHandler(this.relaunchAsAdminButton_Click);
+            // 
+            // mainStatusStrip
+            // 
+            this.mainStatusStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
+            this.mainStatusStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.toolStripStatusLabelStatus,
+            this.toolStripStatusLabelDetails});
+            this.mainStatusStrip.Location = new System.Drawing.Point(0, 582);
+            this.mainStatusStrip.Name = "mainStatusStrip";
+            this.mainStatusStrip.Padding = new System.Windows.Forms.Padding(2, 0, 21, 0);
+            this.mainStatusStrip.Size = new System.Drawing.Size(1054, 26);
+            this.mainStatusStrip.SizingGrip = false;
+            this.mainStatusStrip.TabIndex = 2;
+            this.mainStatusStrip.Text = "mainStatusStrip";
+            // 
+            // toolStripStatusLabelStatus
+            // 
+            this.toolStripStatusLabelStatus.Name = "toolStripStatusLabelStatus";
+            this.toolStripStatusLabelStatus.Size = new System.Drawing.Size(52, 19);
+            this.toolStripStatusLabelStatus.Text = "Ready";
+            // 
+            // toolStripStatusLabelDetails
+            // 
+            this.toolStripStatusLabelDetails.Name = "toolStripStatusLabelDetails";
+            this.toolStripStatusLabelDetails.Size = new System.Drawing.Size(977, 19);
+            this.toolStripStatusLabelDetails.Spring = true;
+            this.toolStripStatusLabelDetails.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 20F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1054, 608);
-            this.Controls.Add(this.splitContainer1);
-            this.Controls.Add(this.toolStrip1);
+            this.Controls.Add(this.mainSplitContainer);
+            this.Controls.Add(this.mainStatusStrip);
+            this.Controls.Add(this.mainToolStrip);
             this.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
             this.Name = "Form1";
             this.Text = "SizeScanner";
             this.Load += new System.EventHandler(this.Form1_Load);
-            this.toolStrip1.ResumeLayout(false);
-            this.toolStrip1.PerformLayout();
-            this.splitContainer1.Panel1.ResumeLayout(false);
-            this.splitContainer1.Panel2.ResumeLayout(false);
-            this.splitContainer1.Panel2.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).EndInit();
-            this.splitContainer1.ResumeLayout(false);
-            ((System.ComponentModel.ISupportInitialize)(this.chart1)).EndInit();
-            this.contextMenuStrip1.ResumeLayout(false);
-            this.flowLayoutPanel1.ResumeLayout(false);
-            this.flowLayoutPanel1.PerformLayout();
+            this.mainToolStrip.ResumeLayout(false);
+            this.mainToolStrip.PerformLayout();
+            this.mainSplitContainer.Panel1.ResumeLayout(false);
+            this.mainSplitContainer.Panel2.ResumeLayout(false);
+            this.mainSplitContainer.Panel2.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.mainSplitContainer)).EndInit();
+            this.mainSplitContainer.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)(this.usageChart)).EndInit();
+            this.chartContextMenu.ResumeLayout(false);
+            this.inaccessibleHeaderPanel.ResumeLayout(false);
+            this.inaccessibleHeaderPanel.PerformLayout();
+            this.mainStatusStrip.ResumeLayout(false);
+            this.mainStatusStrip.PerformLayout();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -283,25 +327,27 @@
 
         #endregion
 
-        private System.Windows.Forms.ToolStrip toolStrip1;
-        private System.Windows.Forms.ToolStripProgressBar toolStripProgressBar1;
-        private System.Windows.Forms.Timer timer1;
-        private System.Windows.Forms.SplitContainer splitContainer1;
-        private System.Windows.Forms.ListBox listBox1;
-        private System.Windows.Forms.DataVisualization.Charting.Chart chart1;
-        private System.Windows.Forms.ToolTip toolTip1;
-        private System.Windows.Forms.ToolStripComboBox toolStripComboBox1;
-        private System.Windows.Forms.Label label1;
-        private System.Windows.Forms.ToolStripComboBox toolStripComboBox2;
-        private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel1;
-        private System.Windows.Forms.Label label2;
-        private System.Windows.Forms.Label label3;
-        private System.Windows.Forms.ToolStripButton toolStripButton1;
-        private System.Windows.Forms.ToolStripLabel toolStripLabel1;
-        private System.Windows.Forms.ContextMenuStrip contextMenuStrip1;
-        private System.Windows.Forms.ToolStripMenuItem openToolStripMenuItem;
-        private System.Windows.Forms.ToolStripMenuItem deleteToolStripMenuItem;
-        private System.Windows.Forms.ToolStripLabel toolStripLabel2;
+        private System.Windows.Forms.ToolStrip mainToolStrip;
+        private System.Windows.Forms.ToolStripProgressBar scanProgressBar;
+        private System.Windows.Forms.Timer scanProgressTimer;
+        private System.Windows.Forms.SplitContainer mainSplitContainer;
+        private System.Windows.Forms.ListBox inaccessibleListBox;
+        private System.Windows.Forms.DataVisualization.Charting.Chart usageChart;
+        private System.Windows.Forms.ToolTip chartToolTip;
+        private System.Windows.Forms.ToolStripComboBox freeSpaceComboBox;
+        private System.Windows.Forms.Label inaccessibleHeaderPrefixLabel;
+        private System.Windows.Forms.ToolStripComboBox filterThresholdComboBox;
+        private System.Windows.Forms.FlowLayoutPanel inaccessibleHeaderPanel;
+        private System.Windows.Forms.Label inaccessibleTotalSizeLabel;
+        private System.Windows.Forms.Label inaccessibleHeaderSuffixLabel;
+        private System.Windows.Forms.ToolStripButton toggleInaccessiblePaneButton;
+        private System.Windows.Forms.ToolStripLabel filterLabel;
+        private System.Windows.Forms.ContextMenuStrip chartContextMenu;
+        private System.Windows.Forms.ToolStripMenuItem showInExplorerMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem deleteMenuItem;
+        private System.Windows.Forms.StatusStrip mainStatusStrip;
+        private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabelStatus;
+        private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabelDetails;
+        private System.Windows.Forms.Button relaunchAsAdminButton;
     }
 }
-

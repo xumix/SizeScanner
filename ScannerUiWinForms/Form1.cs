@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Security.Principal;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
@@ -18,6 +19,7 @@ namespace ScannerUiWinForms
         public Form1()
         {
             InitializeComponent();
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             RegistryKey reg = null;
             try
             {
@@ -36,21 +38,30 @@ namespace ScannerUiWinForms
         }
 
         private DriveScanner _scanner;
+        private FsItem _scanRoot;
         private long _filterThreshold;
         private readonly int _cursorSize;
 
+        private bool IsScanning => !mainToolStrip.Enabled;
+
+        private void SetAppStatus(string text) =>
+            toolStripStatusLabelStatus.Text = text;
+
+        private void SetStatusDetails(string text) =>
+            toolStripStatusLabelDetails.Text = text;
+
         private void Form1_Load(object sender, EventArgs e)
         {
-            var staticItems = toolStrip1.Items.Count;
+            var staticItems = mainToolStrip.Items.Count;
             foreach (var driveInfo in DriveInfo.GetDrives().Where(d => d.IsReady))
             {
-                toolStrip1.Items.Insert(toolStrip1.Items.Count - staticItems,
+                mainToolStrip.Items.Insert(mainToolStrip.Items.Count - staticItems,
                                         new ToolStripButton(driveInfo.Name, null,
                                                             (o, ea) => LoadDrive((ToolStripItem) o)));
             }
-            toolStripComboBox1.SelectedIndex = 1;
-            toolStripComboBox2.SelectedIndex = 4;
-            splitContainer1.SplitterDistance = splitContainer1.Width - LogicalToDeviceUnits(splitContainer1.Width - splitContainer1.SplitterDistance);
+            freeSpaceComboBox.SelectedIndex = 1;
+            filterThresholdComboBox.SelectedIndex = 4;
+            mainSplitContainer.SplitterDistance = mainSplitContainer.Width - LogicalToDeviceUnits(mainSplitContainer.Width - mainSplitContainer.SplitterDistance);
         }
 
         
@@ -60,46 +71,69 @@ namespace ScannerUiWinForms
             var target = sender.Text.Substring(0, 2);
             _scanner = new DriveScanner();
 
-            toolStrip1.Enabled = false;
-            timer1.Start();
+            mainToolStrip.Enabled = false;
+            SetAppStatus($"Scanning {target}...");
+            SetStatusDetails(string.Empty);
+            scanProgressTimer.Start();
 
             var root = await Task.Run(() => _scanner.ScanDrive(target));
 
-            listBox1.Items.Clear();
-            listBox1.Items.AddRange(_scanner.Inaccessible.Cast<object>().ToArray());
+            inaccessibleListBox.Items.Clear();
+            inaccessibleListBox.Items.AddRange(_scanner.Inaccessible.Cast<object>().ToArray());
+            UpdateRelaunchAsAdminButtonVisibility();
 
-            _totals.Clear();
+            _scanRoot = root;
+            inaccessibleTotalSizeLabel.Text = Humanize.Size(root.Items[1].Size);
+            RefreshChart();
 
-            chart1.BeginInit();
-            chart1.ChartAreas.Clear();
-            chart1.Series.Clear();
-
-            label2.Text = Humanize.Size(root.Items[1].Size);
-
-            var percent = 0.0025f*toolStripComboBox2.SelectedIndex;
-            if (toolStripComboBox1.SelectedIndex == 1)
-            {
-                root.Items.RemoveRange(0, 2);
-                _filterThreshold = _scanner.GetDisplayThreshold(percent, false);
-            }
-            else
-            {
-                _filterThreshold = _scanner.GetDisplayThreshold(percent, true);
-            }
-            LoadChartDataCollection(0, root, 0);
-            AlignDoughnuts();
-            chart1.EndInit();
-
-            timer1.Stop();
-            toolStripProgressBar1.Value = 0;
-            toolStripLabel2.Text = string.Empty;
-            toolStrip1.Enabled = true;
+            scanProgressTimer.Stop();
+            scanProgressBar.Value = 0;
+            SetAppStatus("Ready");
+            SetStatusDetails(string.Empty);
+            mainToolStrip.Enabled = true;
         }
 
-        private void timer1_Tick(object sender, EventArgs e)
+        private void scanProgressTimer_Tick(object sender, EventArgs e)
         {
-            toolStripProgressBar1.Value = Math.Min((int) (_scanner.Progress*10), toolStripProgressBar1.Maximum);
-            toolStripLabel2.Text = _scanner.CurrentScanned;
+            scanProgressBar.Value = Math.Min((int) (_scanner.Progress*10), scanProgressBar.Maximum);
+            SetStatusDetails(_scanner.CurrentScanned ?? string.Empty);
+        }
+
+        private void DisplayOptionsChanged(object sender, EventArgs e)
+        {
+            if (IsScanning || _scanRoot == null)
+                return;
+            RefreshChart();
+        }
+
+        private void RefreshChart()
+        {
+            if (_scanRoot == null || _scanner == null)
+                return;
+
+            _totals.Clear();
+            _lastObjects = null;
+
+            usageChart.BeginInit();
+            usageChart.ChartAreas.Clear();
+            usageChart.Series.Clear();
+
+            var percent = 0.0025f * filterThresholdComboBox.SelectedIndex;
+            var includeFreeSpace = freeSpaceComboBox.SelectedIndex == 0;
+            _filterThreshold = _scanner.GetDisplayThreshold(percent, includeFreeSpace);
+
+            var chartRoot = includeFreeSpace ? _scanRoot : GetChartRootWithoutSyntheticEntries();
+            LoadChartDataCollection(0, chartRoot, 0);
+            AlignDoughnuts();
+            usageChart.EndInit();
+        }
+
+        private FsItem GetChartRootWithoutSyntheticEntries()
+        {
+            return new FsItem(_scanRoot.Name, _scanRoot.Size, _scanRoot.IsDir)
+            {
+                Items = _scanRoot.Items.Skip(2).ToList()
+            };
         }
 
         private readonly Dictionary<Series, long> _totals = new Dictionary<Series, long>();
@@ -165,7 +199,7 @@ namespace ScannerUiWinForms
 
         private bool TryGetDataSeries(int dataLevel, FsItem dataPoint, out Series ser)
         {
-            if (chart1.ChartAreas.Count == dataLevel)
+            if (usageChart.ChartAreas.Count == dataLevel)
             {
                 if (dataPoint == Empty)
                 {
@@ -189,7 +223,7 @@ namespace ScannerUiWinForms
                 {
                     ca.BackColor = Color.Transparent;
                 }
-                chart1.ChartAreas.Add(ca);
+                usageChart.ChartAreas.Add(ca);
 
                 ser = new Series("seriesLevel" + dataLevel)
                 {
@@ -197,12 +231,12 @@ namespace ScannerUiWinForms
                     ChartType = SeriesChartType.Doughnut,
                     IsXValueIndexed = true
                 };
-                chart1.Series.Add(ser);
+                usageChart.Series.Add(ser);
                 _totals.Add(ser, 0);
             }
             else
             {
-                ser = chart1.Series[dataLevel];
+                ser = usageChart.Series[dataLevel];
             }
             return true;
         }
@@ -212,18 +246,18 @@ namespace ScannerUiWinForms
 
         private void AlignDoughnuts()
         {
-            for (int i = chart1.Series.Count - 1; i >= 0; i--)
+            for (int i = usageChart.Series.Count - 1; i >= 0; i--)
             {
-                var totalVisible = chart1.Series[i].Points.Sum(p => p.Tag.Equals(PlaceholderTag) ? 0 : p.YValues[0]);
+                var totalVisible = usageChart.Series[i].Points.Sum(p => p.Tag.Equals(PlaceholderTag) ? 0 : p.YValues[0]);
                 if (totalVisible <= _filterThreshold)
                 {
-                    chart1.Series.RemoveAt(i);
+                    usageChart.Series.RemoveAt(i);
                 }
             }
-            var singleWidth = 85.0/chart1.Series.Count;
-            for (int i = 0; i < chart1.Series.Count; i++)
+            var singleWidth = 85.0/usageChart.Series.Count;
+            for (int i = 0; i < usageChart.Series.Count; i++)
             {
-                chart1.Series[i].CustomProperties = "PieStartAngle=270, DoughnutRadius=" + (int) (85 - singleWidth*i);
+                usageChart.Series[i].CustomProperties = "PieStartAngle=270, DoughnutRadius=" + (int) (85 - singleWidth*i);
             }
         }
 
@@ -231,13 +265,13 @@ namespace ScannerUiWinForms
         private IList<HitTestResult> _lastObjects;
         private string _lastTip;
 
-        private void chart1_MouseMove(object sender, MouseEventArgs e)
+        private void usageChart_MouseMove(object sender, MouseEventArgs e)
         {
             if (_last == e.Location) return;
             _last = e.Location;
 
-            contextMenuStrip1.Hide();
-            var objectUnder = chart1.HitTest(e.X, e.Y, true, ChartElementType.DataPoint);
+            chartContextMenu.Hide();
+            var objectUnder = usageChart.HitTest(e.X, e.Y, true, ChartElementType.DataPoint);
             if (objectUnder.Count > 0)
             {
                 if (!CompareCollections(objectUnder))
@@ -245,9 +279,26 @@ namespace ScannerUiWinForms
                     _lastObjects = objectUnder;
                     BuildToolTipText();
                 }
+                if (!IsScanning)
+                {
+                    var fsItems = GetFsItemsArray();
+                    SetStatusDetails(BuildFullPath(fsItems));
+                }
                 var offset = LogicalToDeviceUnits(_cursorSize/2);
-                toolTip1.Show(_lastTip, chart1, (int)(e.X + offset*0.75), e.Y + offset);
+                chartToolTip.Show(_lastTip, usageChart, (int)(e.X + offset*0.75), e.Y + offset);
             }
+            else
+            {
+                chartToolTip.Hide(usageChart);
+                if (!IsScanning)
+                    SetStatusDetails(string.Empty);
+            }
+        }
+
+        private void usageChart_MouseLeave(object sender, EventArgs e)
+        {
+            if (!IsScanning)
+                SetStatusDetails(string.Empty);
         }
 
         private void BuildToolTipText()
@@ -277,6 +328,20 @@ namespace ScannerUiWinForms
                                .ToArray();
         }
 
+        private string BuildFullPath(FsItem[] fsItems)
+        {
+            if (_scanner == null || fsItems.Length == 0)
+                return string.Empty;
+
+            var builder = new StringBuilder(_scanner.CurrentTarget);
+            for (int i = fsItems.Length - 1; i >= 0; i--)
+            {
+                builder.Append(Path.DirectorySeparatorChar);
+                builder.Append(fsItems[i].Name);
+            }
+            return builder.ToString();
+        }
+
         private bool CompareCollections(IList<HitTestResult> result)
         {
             if ((_lastObjects == null ^ result == null) || result == null)
@@ -291,40 +356,79 @@ namespace ScannerUiWinForms
             return true;
         }
 
-        private void toolStripButton1_Click(object sender, EventArgs e)
+        private void toggleInaccessiblePaneButton_Click(object sender, EventArgs e)
         {
-            splitContainer1.Panel2Collapsed ^= true;
+            mainSplitContainer.Panel2Collapsed ^= true;
         }
 
-        private void contextMenuStrip1_Opened(object sender, EventArgs e)
+        private void UpdateRelaunchAsAdminButtonVisibility()
+        {
+            relaunchAsAdminButton.Visible = _scanner != null
+                && _scanner.Inaccessible.Length > 0
+                && !IsRunningAsAdministrator();
+        }
+
+        private static bool IsRunningAsAdministrator()
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
+        private void relaunchAsAdminButton_Click(object sender, EventArgs e)
+        {
+            var exePath = Environment.ProcessPath
+                ?? Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(exePath))
+            {
+                MessageBox.Show("Could not determine the application path.");
+                return;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    UseShellExecute = true,
+                    Verb = "runas"
+                });
+                Application.Exit();
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                // User cancelled the UAC prompt.
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error occurred: " + ex);
+            }
+        }
+
+        private void chartContextMenu_Opened(object sender, EventArgs e)
         {
             var cached = GetFsItemsArray();
             if (cached.Length == 0)
             {
-                contextMenuStrip1.Enabled = false;
+                chartContextMenu.Enabled = false;
                 return;
             }
 
-            contextMenuStrip1.Enabled = true;
-            var builder = new StringBuilder(_scanner.CurrentTarget);
-            for (int i = cached.Length - 1; i >= 0; i--)
-            {
-                builder.Append(Path.DirectorySeparatorChar);
-                builder.Append(cached[i].Name);
-            }
-            contextMenuStrip1.Tag = builder.ToString();
+            chartContextMenu.Enabled = true;
+            var fullPath = BuildFullPath(cached);
+            chartContextMenu.Tag = fullPath;
+            var builder = new StringBuilder(fullPath);
             builder.AppendFormat("{0}{1}; {2}{0}(hover this tooltip to return back to search mode)",
                                  Environment.NewLine,
                                  cached[0].IsDir ? "Folder" : "File",
                                  Humanize.FsItem(cached[0]));
-            toolTip1.Show(builder.ToString(),
-                          chart1,
-                          chart1.PointToClient(new Point(contextMenuStrip1.Left, contextMenuStrip1.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi/96.0)))));
+            chartToolTip.Show(builder.ToString(),
+                          usageChart,
+                          usageChart.PointToClient(new Point(chartContextMenu.Left, chartContextMenu.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi/96.0)))));
         }
 
-        private void openToolStripMenuItem_Click(object sender, EventArgs e)
+        private void showInExplorerMenuItem_Click(object sender, EventArgs e)
         {
-            StartExplorerSelect((string)contextMenuStrip1.Tag);
+            StartExplorerSelect((string)chartContextMenu.Tag);
         }
 
         public static void StartExplorerSelect(string objectToSelect)
@@ -338,9 +442,9 @@ namespace ScannerUiWinForms
             Process.Start(explorerString, command);
         }
 
-        private void deleteToolStripMenuItem_Click(object sender, EventArgs e)
+        private void deleteMenuItem_Click(object sender, EventArgs e)
         {
-            var path = (string) contextMenuStrip1.Tag;
+            var path = (string) chartContextMenu.Tag;
             int i = 0;
             if (File.Exists(path))
             {

@@ -24,7 +24,7 @@ Dependency flow: UI/Console → `ScannerCore`. Central package versions live in 
 
 - **Platform**: x86/x64 AnyCPU; requires Windows APIs (`kernel32.dll`, `ntdll.dll`). Not cross-platform. Requires a Windows version supported by .NET 10.
 - **Size mode**: `ScanDrive` uses allocation size; `ScanDirectory` uses logical file size (`useAllocationSize` flag in `ScanUnitInternal`).
-- **Progress**: Poll `DriveScanner.CurrentScanned` and `Progress` (bytes processed / occupied space). UI uses `Task.Run` + `timer1` (300 ms).
+- **Progress**: Poll `DriveScanner.CurrentScanned` and `Progress` (bytes processed / occupied space). UI uses `Task.Run` + `scanProgressTimer` (300 ms).
 - **Cancellation**: `ScanDirectory` accepts `CancellationToken`; `ScanDrive` does not.
 
 ## Build & run
@@ -55,7 +55,7 @@ No automated tests exist. Validate scanner changes via `ScannerConsole`; validat
 - WinForms: event handlers and chart logic in `Form1.cs`; control layout/properties in `Form1.Designer.cs` only.
 - `Humanize` (`Humanize.cs`) is the single place for size display strings (`"<Access Denied>"`, `"<Empty>"`, KB/MB suffixes).
 - Synthetic `FsItem` names (`[Free space]`, `[Inaccessible]`) and index assumptions (`root.Items[1]` for inaccessible label) are intentional — preserve ordering when changing drive scan output.
-- Filter threshold: `0.0025f * toolStripComboBox2.SelectedIndex` × total/occupied bytes (`GetDisplayThreshold`).
+- Filter threshold: `0.0025f * filterThresholdComboBox.SelectedIndex` × total/occupied bytes (`GetDisplayThreshold`).
 
 ## Key files
 
