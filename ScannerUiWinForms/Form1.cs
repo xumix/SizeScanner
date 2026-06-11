@@ -19,6 +19,7 @@ namespace ScannerUiWinForms
         public Form1()
         {
             InitializeComponent();
+            _chartToolTipFont = new Font(FontFamily.GenericMonospace, Font.Size);
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             RegistryKey reg = null;
             try
@@ -41,6 +42,7 @@ namespace ScannerUiWinForms
         private FsItem _scanRoot;
         private long _filterThreshold;
         private readonly int _cursorSize;
+        private readonly Font _chartToolTipFont;
 
         private bool IsScanning => !mainToolStrip.Enabled;
 
@@ -264,6 +266,7 @@ namespace ScannerUiWinForms
         private Point _last;
         private IList<HitTestResult> _lastObjects;
         private string _lastTip;
+        private string _chartToolTipText = string.Empty;
 
         private void usageChart_MouseMove(object sender, MouseEventArgs e)
         {
@@ -285,7 +288,7 @@ namespace ScannerUiWinForms
                     SetStatusDetails(BuildFullPath(fsItems));
                 }
                 var offset = LogicalToDeviceUnits(_cursorSize/2);
-                chartToolTip.Show(_lastTip, usageChart, (int)(e.X + offset*0.75), e.Y + offset);
+                ShowChartToolTip(_lastTip, usageChart, (int)(e.X + offset*0.75), e.Y + offset);
             }
             else
             {
@@ -303,21 +306,79 @@ namespace ScannerUiWinForms
 
         private void BuildToolTipText()
         {
-            var fsItems = GetFsItemsArray();
-            var list = new List<string>();
-            var builder = new StringBuilder();
-            for (int j = 0; j < fsItems.Length; j++)
+            var fsItems = GetFsItemsArray().Reverse().ToArray();
+            if (fsItems.Length == 0)
             {
-                for (int i = j; i < fsItems.Length - 1; i++)
-                {
-                    builder.Append(">");
-                }
-                var fsItem = fsItems[j];
-                builder.AppendFormat("{0}: {1}", fsItem.Name, Humanize.FsItem(fsItem));
-                list.Add(builder.ToString());
-                builder.Clear();
+                _lastTip = string.Empty;
+                return;
             }
-            _lastTip = string.Join("\r\n", list);
+
+            var names = fsItems
+                .Select((fsItem, depth) => BuildToolTipTreeName(fsItem.Name, depth))
+                .ToArray();
+            var nameColumnWidth = names.Max(n => n.Length);
+            var lines = names
+                .Select((name, index) => $"{name.PadRight(nameColumnWidth)}  |  {Humanize.FsItem(fsItems[index])}");
+
+            _lastTip = string.Join(Environment.NewLine, lines);
+        }
+
+        private static string BuildToolTipTreeName(string name, int depth)
+        {
+            if (depth == 0)
+                return name;
+
+            return new string(' ', (depth - 1)*4) + "` " + name;
+        }
+
+        private void chartToolTip_Popup(object sender, PopupEventArgs e)
+        {
+            e.ToolTipSize = MeasureChartToolTip(_chartToolTipText);
+        }
+
+        private void ShowChartToolTip(string text, Control control, int x, int y)
+        {
+            _chartToolTipText = text ?? string.Empty;
+            chartToolTip.Show(_chartToolTipText, control, x, y);
+        }
+
+        private void ShowChartToolTip(string text, Control control, Point point)
+        {
+            _chartToolTipText = text ?? string.Empty;
+            chartToolTip.Show(_chartToolTipText, control, point);
+        }
+
+        private Size MeasureChartToolTip(string text)
+        {
+            var lines = text.Split(new[] {Environment.NewLine}, StringSplitOptions.None);
+            var padding = LogicalToDeviceUnits(6);
+            var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            var lineHeight = TextRenderer.MeasureText("M", _chartToolTipFont, Size.Empty, flags).Height;
+            var width = lines
+                .Select(line => TextRenderer.MeasureText(string.IsNullOrEmpty(line) ? " " : line, _chartToolTipFont, Size.Empty, flags).Width)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            return new Size(width + padding*2, lineHeight*lines.Length + padding*2);
+        }
+
+        private void chartToolTip_Draw(object sender, DrawToolTipEventArgs e)
+        {
+            e.DrawBackground();
+            e.DrawBorder();
+
+            var text = e.ToolTipText ?? _chartToolTipText;
+            var padding = LogicalToDeviceUnits(6);
+            var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+            var lineHeight = TextRenderer.MeasureText("M", _chartToolTipFont, Size.Empty, flags).Height;
+            var x = e.Bounds.Left + padding;
+            var y = e.Bounds.Top + padding;
+
+            foreach (var line in text.Split(new[] {Environment.NewLine}, StringSplitOptions.None))
+            {
+                TextRenderer.DrawText(e.Graphics, line, _chartToolTipFont, new Point(x, y), SystemColors.InfoText, flags);
+                y += lineHeight;
+            }
         }
 
         private FsItem[] GetFsItemsArray()
@@ -421,9 +482,9 @@ namespace ScannerUiWinForms
                                  Environment.NewLine,
                                  cached[0].IsDir ? "Folder" : "File",
                                  Humanize.FsItem(cached[0]));
-            chartToolTip.Show(builder.ToString(),
-                          usageChart,
-                          usageChart.PointToClient(new Point(chartContextMenu.Left, chartContextMenu.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi/96.0)))));
+            ShowChartToolTip(builder.ToString(),
+                             usageChart,
+                             usageChart.PointToClient(new Point(chartContextMenu.Left, chartContextMenu.Top - LogicalToDeviceUnits(52 + (int)Math.Ceiling(DeviceDpi/96.0)))));
         }
 
         private void showInExplorerMenuItem_Click(object sender, EventArgs e)

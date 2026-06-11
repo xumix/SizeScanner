@@ -15,6 +15,7 @@
         {
             if (disposing && (components != null))
             {
+                _chartToolTipFont?.Dispose();
                 components.Dispose();
             }
             base.Dispose(disposing);
@@ -267,6 +268,12 @@
             this.relaunchAsAdminButton.UseVisualStyleBackColor = true;
             this.relaunchAsAdminButton.Visible = false;
             this.relaunchAsAdminButton.Click += new System.EventHandler(this.relaunchAsAdminButton_Click);
+            // 
+            // chartToolTip
+            // 
+            this.chartToolTip.OwnerDraw = true;
+            this.chartToolTip.Popup += new System.Windows.Forms.PopupEventHandler(this.chartToolTip_Popup);
+            this.chartToolTip.Draw += new System.Windows.Forms.DrawToolTipEventHandler(this.chartToolTip_Draw);
             // 
             // mainStatusStrip
             // 
