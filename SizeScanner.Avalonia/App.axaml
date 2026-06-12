@@ -2,11 +2,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="SizeScanner.Avalonia.App"
              xmlns:local="using:SizeScanner.Avalonia"
+             xmlns:views="using:SizeScanner.Avalonia.Views"
              RequestedThemeVariant="Default">
     <Application.DataTemplates>
         <local:ViewLocator />
     </Application.DataTemplates>
     <Application.Styles>
         <FluentTheme />
+        <Style Selector="views|SunburstChartControl">
+            <Setter Property="SegmentBorderBrush"
+                    Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+            <Setter Property="HoverOutlineBrush"
+                    Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+        </Style>
     </Application.Styles>
 </Application>

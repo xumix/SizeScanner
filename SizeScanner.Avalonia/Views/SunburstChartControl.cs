@@ -14,7 +14,14 @@ public sealed class SunburstChartControl : Control
     public static readonly StyledProperty<SunburstChart?> ChartProperty =
         AvaloniaProperty.Register<SunburstChartControl, SunburstChart?>(nameof(Chart));
 
-    private static readonly Pen SegmentBorder = new(Brushes.Black, 1);
+    public static readonly StyledProperty<SunburstSegment?> HoveredSegmentProperty =
+        AvaloniaProperty.Register<SunburstChartControl, SunburstSegment?>(nameof(HoveredSegment));
+
+    public static readonly StyledProperty<IBrush?> SegmentBorderBrushProperty =
+        AvaloniaProperty.Register<SunburstChartControl, IBrush?>(nameof(SegmentBorderBrush));
+
+    public static readonly StyledProperty<IBrush?> HoverOutlineBrushProperty =
+        AvaloniaProperty.Register<SunburstChartControl, IBrush?>(nameof(HoverOutlineBrush));
 
     public SunburstChart? Chart
     {
@@ -22,9 +29,31 @@ public sealed class SunburstChartControl : Control
         set => SetValue(ChartProperty, value);
     }
 
+    public SunburstSegment? HoveredSegment
+    {
+        get => GetValue(HoveredSegmentProperty);
+        set => SetValue(HoveredSegmentProperty, value);
+    }
+
+    public IBrush? SegmentBorderBrush
+    {
+        get => GetValue(SegmentBorderBrushProperty);
+        set => SetValue(SegmentBorderBrushProperty, value);
+    }
+
+    public IBrush? HoverOutlineBrush
+    {
+        get => GetValue(HoverOutlineBrushProperty);
+        set => SetValue(HoverOutlineBrushProperty, value);
+    }
+
     static SunburstChartControl()
     {
-        AffectsRender<SunburstChartControl>(ChartProperty);
+        AffectsRender<SunburstChartControl>(
+            ChartProperty,
+            HoveredSegmentProperty,
+            SegmentBorderBrushProperty,
+            HoverOutlineBrushProperty);
     }
 
     public SunburstSegment? HitTestSegment(Point point) =>
@@ -37,10 +66,20 @@ public sealed class SunburstChartControl : Control
         if (chart is null || chart.RingCount == 0)
             return;
 
+        var segmentBorder = new Pen(SegmentBorderBrush ?? Brushes.Black, 1);
+        var hoverOutline = new Pen(HoverOutlineBrush ?? Brushes.Black, 3);
+
+        var hovered = HoveredSegment;
         foreach (var segment in chart.Segments)
         {
             var geometry = CreateSegmentGeometry(Bounds.Size, segment, chart.RingCount);
-            context.DrawGeometry(new SolidColorBrush(segment.Color), SegmentBorder, geometry);
+            context.DrawGeometry(new SolidColorBrush(segment.Color), segmentBorder, geometry);
+        }
+
+        if (hovered is not null)
+        {
+            var geometry = CreateSegmentGeometry(Bounds.Size, hovered, chart.RingCount);
+            context.DrawGeometry(null, hoverOutline, geometry);
         }
     }
 

@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using ScannerCore;
+using SizeScanner.Avalonia.Charting;
 using SizeScanner.Avalonia.ViewModels;
 
 namespace SizeScanner.Avalonia.Views;
@@ -62,21 +63,29 @@ public partial class ChartView : UserControl
         }
     }
 
+    private SunburstSegment? HitTestSegment(Point position) =>
+        _chart.HitTestSegment(position);
+
     private FsItem? HitTest(Point position)
     {
         if (Vm is null) return null;
-        return Vm.ResolveNode(_chart.HitTestSegment(position));
+        return Vm.ResolveNode(HitTestSegment(position));
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (Vm is null) return;
         var position = e.GetPosition(_chart);
-        var node = HitTest(position);
-        Vm.Hover(node);
+        var segment = HitTestSegment(position);
+        _chart.HoveredSegment = segment;
+        Vm.Hover(Vm.ResolveNode(segment));
     }
 
-    private void OnPointerExited(object? sender, PointerEventArgs e) => Vm?.ClearHover();
+    private void OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        _chart.HoveredSegment = null;
+        Vm?.ClearHover();
+    }
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
