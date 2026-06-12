@@ -49,12 +49,8 @@ public sealed class SunburstChartControl : Control
 
     private static StreamGeometry CreateSegmentGeometry(Size bounds, SunburstSegment segment, int ringCount)
     {
-        var outerRadius = Math.Min(bounds.Width, bounds.Height) / 2d;
         var center = new Point(bounds.Width / 2d, bounds.Height / 2d);
-        var innerHole = outerRadius * 0.18;
-        var ringWidth = (outerRadius - innerHole) / ringCount;
-        var segmentOuter = outerRadius - segment.RingIndex * ringWidth;
-        var segmentInner = segmentOuter - ringWidth;
+        var (segmentInner, segmentOuter) = SunburstRingLayout.GetSegmentRadii(segment.RingIndex, bounds, ringCount);
         var sweep = Math.Min(segment.SweepAngle, 359.999d);
         var largeArc = sweep > 180d;
 

@@ -22,7 +22,7 @@ public sealed class SunburstChartBuilderTests
     }
 
     [Fact]
-    public void Level_zero_segments_are_on_outer_ring_and_split_full_circle()
+    public void Level_zero_segments_are_on_inner_ring_and_split_full_circle()
     {
         var root = TestTree.Dir("root",
             TestTree.Dir("a",
