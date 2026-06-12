@@ -1,0 +1,71 @@
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Markup.Xaml;
+using ScannerCore;
+using SizeScanner.Avalonia.ViewModels;
+
+namespace SizeScanner.Avalonia.Views;
+
+public partial class ChartView : UserControl
+{
+    private SunburstChartControl _chart = null!;
+
+    public ChartView()
+    {
+        InitializeComponent();
+        _chart = this.FindControl<SunburstChartControl>("PART_Chart")!;
+
+        _chart.PointerMoved += OnPointerMoved;
+        _chart.PointerExited += OnPointerExited;
+        _chart.PointerPressed += OnPointerPressed;
+    }
+
+    private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
+
+    private ChartViewModel? Vm => DataContext as ChartViewModel;
+
+    private FsItem? HitTest(Point position)
+    {
+        if (Vm is null) return null;
+        return Vm.ResolveNode(_chart.HitTestSegment(position));
+    }
+
+    private void OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (Vm is null) return;
+        var position = e.GetPosition(_chart);
+        var node = HitTest(position);
+        Vm.Hover(node);
+    }
+
+    private void OnPointerExited(object? sender, PointerEventArgs e) => Vm?.ClearHover();
+
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (Vm is null) return;
+        var props = e.GetCurrentPoint(_chart).Properties;
+        var node = HitTest(e.GetPosition(_chart));
+
+        if (props.IsLeftButtonPressed)
+        {
+            if (node is not null) Vm.TryScopeAt(node);
+            return;
+        }
+
+        if (props.IsRightButtonPressed)
+        {
+            if (node is null || Vm.IsFreeSpace(node))
+            {
+                Vm.SetContextTarget(null);
+                e.Handled = true;
+                return;
+            }
+
+            Vm.SetContextTarget(node);
+        }
+    }
+}
