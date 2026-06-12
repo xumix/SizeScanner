@@ -39,9 +39,6 @@ public sealed class SunburstChartControl : Control
 
         foreach (var segment in chart.Segments)
         {
-            if (segment.IsPlaceholder)
-                continue;
-
             var geometry = CreateSegmentGeometry(Bounds.Size, segment, chart.RingCount);
             context.DrawGeometry(new SolidColorBrush(segment.Color), SegmentBorder, geometry);
         }

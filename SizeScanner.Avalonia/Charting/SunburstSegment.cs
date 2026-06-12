@@ -13,9 +13,14 @@ public sealed record SunburstSegment(
     long Size,
     double StartAngle,
     double SweepAngle,
-    Color Color,
-    bool IsPlaceholder)
+    Color Color)
 {
     public double EndAngle => StartAngle + SweepAngle;
-    public bool IsActionable => Node is not null && !IsPlaceholder;
+    public bool IsActionable => Node is not null;
+
+    public string DisplayText =>
+        $"{Node?.Name ?? "<no name>"} Size: ({Humanize.Size(Size)})";
+
+    public override string ToString() =>
+        $"{Node?.Name ?? "<no name>"} Size: ({Humanize.Size(Size)})";
 }

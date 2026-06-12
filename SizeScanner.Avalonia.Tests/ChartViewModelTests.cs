@@ -4,6 +4,7 @@
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
+using SizeScanner.Avalonia.Charting;
 using SizeScanner.Avalonia.ViewModels;
 using Xunit;
 
@@ -41,6 +42,7 @@ public sealed class ChartViewModelTests
         vm.Refresh(filterThreshold: 0, includeFreeSpace: false);
 
         Assert.NotEmpty(vm.Layout.Segments);
+        Assert.NotEmpty(vm.DisplayedSegments);
         Assert.False(vm.IsScoped);
     }
 
@@ -59,6 +61,35 @@ public sealed class ChartViewModelTests
 
         vm.GoToRootCommand.Execute(null);
         Assert.False(vm.IsScoped);
+    }
+
+    [Fact]
+    public void Refresh_with_filter_threshold_includes_aggregated_filtered_segment()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("root",
+            TestTree.File("big", 1000),
+            TestTree.File("tiny", 5));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\root");
+        vm.Refresh(filterThreshold: 10, includeFreeSpace: false);
+
+        Assert.Contains(vm.DisplayedSegments, segment => segment.Node?.Name == ChartDisplayMetadata.FilteredName);
+    }
+
+    [Fact]
+    public void SuppressesContextMenu_for_synthetic_root_segments()
+    {
+        var vm = CreateVm();
+        var filtered = new FsItem(ChartDisplayMetadata.FilteredName, 5, isDir: false);
+        var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, 500, isDir: false);
+        var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, 0, isDir: false);
+        var folder = new FsItem("Windows", 100, isDir: true) { Items = [] };
+
+        Assert.True(vm.SuppressesContextMenu(filtered));
+        Assert.True(vm.SuppressesContextMenu(freeSpace));
+        Assert.True(vm.SuppressesContextMenu(inaccessible));
+        Assert.True(vm.SuppressesContextMenu(null));
+        Assert.False(vm.SuppressesContextMenu(folder));
     }
 
     [Fact]

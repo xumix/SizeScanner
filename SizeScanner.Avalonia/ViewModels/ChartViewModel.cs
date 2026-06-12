@@ -87,7 +87,10 @@ public sealed partial class ChartViewModel : ViewModelBase
     {
         if (item is null || !item.IsDir) return false;
         if (item.Items is null || item.Items.Count == 0) return false;
-        if (item.Name == DriveScanMetadata.FreeSpaceName || item.Name == DriveScanMetadata.InaccessibleName) return false;
+        if (item.Name == DriveScanMetadata.FreeSpaceName
+            || item.Name == DriveScanMetadata.InaccessibleName
+            || item.Name == ChartDisplayMetadata.FilteredName)
+            return false;
         return true;
     }
 
@@ -127,6 +130,13 @@ public sealed partial class ChartViewModel : ViewModelBase
     }
 
     public bool IsFreeSpace(FsItem? node) => node?.Name == DriveScanMetadata.FreeSpaceName;
+
+    public bool IsFiltered(FsItem? node) => node?.Name == ChartDisplayMetadata.FilteredName;
+
+    public bool IsInaccessible(FsItem? node) => node?.Name == DriveScanMetadata.InaccessibleName;
+
+    public bool SuppressesContextMenu(FsItem? node) =>
+        node is null || IsFreeSpace(node) || IsFiltered(node) || IsInaccessible(node);
 
     [RelayCommand]
     private void OpenInExplorer()

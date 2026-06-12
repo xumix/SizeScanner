@@ -15,6 +15,7 @@ public partial class ChartView : UserControl
 {
     private SunburstChartControl _chart = null!;
     private ChartViewModel? _subscribedVm;
+    private Point? _lastRightClickPosition;
 
     public ChartView()
     {
@@ -24,6 +25,10 @@ public partial class ChartView : UserControl
         _chart.PointerMoved += OnPointerMoved;
         _chart.PointerExited += OnPointerExited;
         _chart.PointerPressed += OnPointerPressed;
+        _chart.ContextRequested += OnChartContextRequested;
+        if (_chart.ContextMenu is ContextMenu contextMenu)
+            contextMenu.Opening += OnChartContextMenuOpening;
+
         DataContextChanged += (_, _) => SubscribeViewModel();
     }
 
@@ -88,7 +93,8 @@ public partial class ChartView : UserControl
 
         if (props.IsRightButtonPressed)
         {
-            if (node is null || Vm.IsFreeSpace(node))
+            _lastRightClickPosition = e.GetPosition(_chart);
+            if (Vm.SuppressesContextMenu(node))
             {
                 Vm.SetContextTarget(null);
                 e.Handled = true;
@@ -97,5 +103,31 @@ public partial class ChartView : UserControl
 
             Vm.SetContextTarget(node);
         }
+    }
+
+    private void OnChartContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (Vm is null || !e.TryGetPosition(_chart, out var position))
+            return;
+
+        var node = HitTest(position);
+        if (!Vm.SuppressesContextMenu(node))
+            return;
+
+        Vm.SetContextTarget(null);
+        e.Handled = true;
+    }
+
+    private void OnChartContextMenuOpening(object? sender, CancelEventArgs e)
+    {
+        if (Vm is null || _lastRightClickPosition is not Point position)
+            return;
+
+        var node = HitTest(position);
+        if (!Vm.SuppressesContextMenu(node))
+            return;
+
+        Vm.SetContextTarget(null);
+        e.Cancel = true;
     }
 }
