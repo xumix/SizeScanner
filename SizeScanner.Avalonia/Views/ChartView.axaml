@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="using:System"
+             xmlns:vm="using:SizeScanner.Avalonia.ViewModels"
+             xmlns:views="using:SizeScanner.Avalonia.Views"
+             x:Class="SizeScanner.Avalonia.Views.ChartView"
+             x:DataType="vm:ChartViewModel">
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0" HorizontalAlignment="Stretch"
+                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                IsVisible="{Binding IsScoped}"
+                Padding="8,6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Go up" Command="{Binding GoUpCommand}" />
+                <Button Content="Go to root" Command="{Binding GoToRootCommand}" />
+                <TextBlock Text="{Binding ScopeLabel}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </Border>
+
+        <views:SunburstChartControl x:Name="PART_Chart"
+                                    Grid.Row="1"
+                                    HorizontalAlignment="Stretch"
+                                    VerticalAlignment="Stretch"
+                                    Chart="{Binding Layout}"
+                                    Focusable="True"
+                                    ToolTip.ShowDelay="100">
+            <views:SunburstChartControl.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Open in Explorer" Command="{Binding OpenInExplorerCommand}" />
+                    <MenuItem Header="Delete" Command="{Binding DeleteCommand}" />
+                    <MenuItem Header="Delete permanently" Command="{Binding DeletePermanentlyCommand}" />
+                </ContextMenu>
+            </views:SunburstChartControl.ContextMenu>
+            <ToolTip.Tip>
+                <ToolTip MaxWidth="{x:Static sys:Double.PositiveInfinity}" Padding="6">
+                    <TextBlock Text="{Binding HoverToolTip}"
+                               FontFamily="Consolas,Courier New,monospace"
+                               TextWrapping="NoWrap" />
+                </ToolTip>
+            </ToolTip.Tip>
+        </views:SunburstChartControl>
+    </Grid>
+</UserControl>

@@ -4,7 +4,7 @@ A Windows disk-usage visualizer inspired by [Steffen Gerlach's Scanner](http://w
 
 Pick a drive or folder, wait for the scan, and explore where space goes through nested doughnut charts. Hover for names and sizes; right-click a slice to open it in Explorer or delete it.
 
-![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/SSSS01.png)
+![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/main_window.png)
 
 Compared with the original Scanner2 tool, SizeScanner:
 
@@ -26,7 +26,7 @@ From the repository root:
 ```powershell
 dotnet restore SizeScanner.slnx
 dotnet build SizeScanner.slnx -c Debug
-dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
+dotnet run --project .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj
 ```
 
 When the window opens, click a drive letter in the toolbar (for example `C:\`) or **Browse...** to pick a folder, then wait for the progress bar to finish.

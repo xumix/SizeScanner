@@ -1,6 +1,6 @@
 # SizeScanner — Agent Guide
 
-Windows-only disk usage visualizer (.NET 10). Inspired by Steffen Gerlach's Scanner2; scans on demand and renders nested doughnut charts.
+Windows-only disk usage visualizer (.NET 10). Inspired by Steffen Gerlach's Scanner2; scans on demand and renders nested sunburst charts.
 
 ## Solution layout
 
@@ -8,7 +8,8 @@ Windows-only disk usage visualizer (.NET 10). Inspired by Steffen Gerlach's Scan
 |---------|------|
 | `ScannerCore/` | Scan engine + `FsItem` tree model — **put all filesystem logic here** |
 | `ScannerCore.Tests/` | xUnit unit and integration tests for `ScannerCore` |
-| `ScannerUiWinForms/` | Production WinForms UI (`Form1.cs` = orchestration; `Form1.Designer.cs` = controls) |
+| `SizeScanner.Avalonia/` | Production Avalonia UI (MVVM + custom sunburst chart); Windows-only due to ScannerCore |
+| `SizeScanner.Avalonia.Tests/` | xUnit tests for Avalonia chart builder, services, and view-models |
 | `ScannerConsole/` | Manual perf/progress harness only — not shipped |
 
 Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions live in `Directory.Packages.props`. CI is defined in `.gitlab-ci.yml` (GitLab) and `.github/workflows/` (GitHub Actions); both require Windows runners.
@@ -19,7 +20,7 @@ Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions li
 2. `DirectoryScanner` enumerates via `NtQueryDirectoryFile` P/Invoke (`DirectoryScanner.cs`) — not `Directory.GetFiles`.
 3. Symlinks/reparse points are **skipped** unless `FILE_ATTRIBUTE_OFFLINE` (OneDrive online-only). Denied dirs return `null` → logged in `DriveScanner.Inaccessible`.
 4. Drive scans prepend synthetic children via `DriveScanMetadata` (`[Free space]`, `[Inaccessible]`); directory scans do not.
-5. UI maps the tree to nested `SeriesChartType.Doughnut` series via `ChartMapper`; each `DataPoint.Tag` holds the source `FsItem`. Items below `_filterThreshold` collapse into placeholder slices (`ChartMapper.PlaceholderTag`).
+5. UI maps the tree to nested sunburst segments via `SunburstChartBuilder`; each `SunburstSegment` holds the source `FsItem`. Items below the filter threshold collapse into a gray filtered band on the innermost ring.
 
 ## Windows / scanning specifics
 
@@ -36,20 +37,21 @@ Requires the **.NET 10 SDK** (pinned in `global.json`). SDK-style projects targe
 dotnet restore SizeScanner.slnx
 dotnet build SizeScanner.slnx -c Debug
 dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release
-dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
+dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Release
+dotnet run --project .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj
 
 # Scanner harness (path argument optional):
 dotnet run --project .\ScannerConsole\ScannerConsole.csproj -- C:\some\folder
 
 # Framework-dependent publish:
-dotnet publish .\ScannerUiWinForms\ScannerUiWinForms.csproj -c Release -r win-x64 --self-contained false
+dotnet publish .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj -c Release -r win-x64 --self-contained false
 ```
 
 **NuGet packages** (versions in `Directory.Packages.props`):
-- `WinForms.DataVisualization` — chart control for `ScannerUiWinForms`
+- `Avalonia`, `Avalonia.Desktop`, `Avalonia.Themes.Fluent`, `Avalonia.Fonts.Inter` — Avalonia UI
+- `CommunityToolkit.Mvvm`, `Microsoft.Extensions.DependencyInjection` — MVVM and DI
 - `Spectre.Console` — console harness output only
-- `xunit.v3`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` — test project
-- `MinVer` — semantic versioning for `ScannerUiWinForms`
+- `xunit.v3`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` — test projects
 
 ## CI and release
 
@@ -58,17 +60,15 @@ dotnet publish .\ScannerUiWinForms\ScannerUiWinForms.csproj -c Release -r win-x6
 | GitLab | `.gitlab-ci.yml` | Any git tag → `publish/` artifact (`tags: [windows]`) |
 | GitHub | `.github/workflows/dotnet-desktop.yml`, `release.yml`, `codeql.yml` | Tag matching `v*` → GitHub Release with zip |
 
-Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tests` with coverlet, publish self-contained `win-x64` (`--self-contained true`). GitHub release workflow uses `fetch-depth: 0` / GitLab `GIT_DEPTH: "0"` so MinVer can resolve versions from git history.
+Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tests` and `SizeScanner.Avalonia.Tests` with coverlet, publish self-contained `win-x64` (`--self-contained true`).
 
 ## Conventions when editing
 
 - Keep P/Invoke and native structs inside `DirectoryScanner` — do not scatter Win32 calls into UI.
-- WinForms: event handlers and orchestration in `Form1.cs`; control layout/properties in `Form1.Designer.cs` only.
-- Chart rendering belongs in `ChartMapper.cs`; Explorer open and delete in `FileSystemActions.cs`; scan lifecycle in `ScanSession.cs`.
-- Settings persist to `%AppData%\SizeScanner\settings.json` via `UserSettings.cs`.
-- `Humanize` (`Humanize.cs`) is the single place for size display strings (`"<Access Denied>"`, `"<Empty>"`, KB/MB suffixes). Uses invariant culture for numeric formatting.
+- Avalonia UI lives in `SizeScanner.Avalonia/`; keep platform/IO behind interfaces in `Abstractions/` with Windows implementations in `Services/`. Chart building belongs in `Charting/SunburstChartBuilder.cs`; view-models in `ViewModels/`.
+- Settings persist to `%AppData%\SizeScanner\settings.avalonia.json` via `JsonSettingsStore` and `Models/UserSettings.cs`.
 - Synthetic drive entries: use `DriveScanMetadata` constants and helpers — do not hard-code `[Free space]` / `[Inaccessible]` or index `1`.
-- Filter threshold: `0.0025f * filterThresholdComboBox.SelectedIndex` × total/occupied bytes (`GetDisplayThreshold`).
+- Filter threshold: `0.0025f × FilterIndex × display-root total`, where display-root total is the sum of positive child sizes on `ChartViewModel.GetDisplayRoot()` (matches chart denominator via `FilterThreshold.GetDisplayTotal`).
 
 ## Key files
 
@@ -77,6 +77,8 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 - `ScannerCore/DriveScanMetadata.cs` — synthetic drive scan entry names and accessors
 - `ScannerCore/ScanProgress.cs` — progress report record for `IProgress`
 - `ScannerCore/FsItem.cs` — tree node (`Items` null = access denied dir)
-- `ScannerUiWinForms/ChartMapper.cs` — doughnut chart series building
-- `ScannerUiWinForms/Form1.cs` — toolbar, scan orchestration, tooltips, shortcuts
-- `ScannerUiWinForms/UserSettings.cs` — JSON settings load/save
+- `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` — sunburst segment building
+- `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` — toolbar, scan orchestration, settings
+- `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` — chart scope, hover, context actions
+- `SizeScanner.Avalonia/Models/UserSettings.cs` — persisted settings DTO
+- `SizeScanner.Avalonia/Services/JsonSettingsStore.cs` — JSON settings load/save

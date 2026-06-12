@@ -1,0 +1,133 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SizeScanner.Avalonia.ViewModels"
+        xmlns:views="using:SizeScanner.Avalonia.Views"
+        xmlns:conv="using:SizeScanner.Avalonia.Converters"
+        xmlns:models="using:SizeScanner.Avalonia.Models"
+        x:Class="SizeScanner.Avalonia.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/main.ico"
+        Width="1100" Height="720" MinWidth="720" MinHeight="480"
+        Title="SizeScanner">
+
+    <Window.Resources>
+        <conv:BoolToGridLengthConverter x:Key="PaneWidth" />
+        <conv:BoolToPaneMinWidthConverter x:Key="PaneMinWidth" />
+    </Window.Resources>
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="F5" Command="{Binding RescanCommand}" />
+        <KeyBinding Gesture="Ctrl+O" Command="{Binding BrowseCommand}" />
+        <KeyBinding Gesture="Escape" Command="{Binding CancelScanCommand}" />
+    </Window.KeyBindings>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Padding="8,6"
+                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <Button Content="Browse..." Command="{Binding BrowseCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+                <Button Content="Rescan" Command="{Binding RescanCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+                <Separator Height="NaN" Width="1" />
+                <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsScanning}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:DriveItem">
+                            <Button Content="{Binding DisplayName}"
+                                    Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).ScanDriveCommand}"
+                                    CommandParameter="{Binding}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
+                <ProgressBar Width="280" Minimum="0" Maximum="100"
+                             Value="{Binding ProgressValue}"
+                             IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
+                <Button Content="Cancel" Command="{Binding CancelScanCommand}"
+                        IsVisible="{Binding IsScanning}" />
+                <Separator Height="NaN" Width="1" />
+                <ComboBox ItemsSource="{Binding FreeSpaceOptions}"
+                          SelectedIndex="{Binding FreeSpaceIndex}"
+                          IsEnabled="{Binding !IsScanning}" />
+                <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="8,0,0,0" />
+                <ComboBox ItemsSource="{Binding FilterOptions}"
+                          SelectedIndex="{Binding FilterIndex}"
+                          IsEnabled="{Binding !IsScanning}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:FilterOption">
+                            <TextBlock Text="{Binding Label}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Separator Height="NaN" Width="1" />
+                <Button Content="Toggle Inaccessible" Command="{Binding ToggleInaccessiblePaneCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Padding="8,4"
+                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <StackPanel Orientation="Horizontal" Spacing="16">
+                <TextBlock Text="{Binding StatusText}" />
+                <TextBlock Text="{Binding StatusDetails}" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding IsScanning}" />
+                <TextBlock Text="{Binding Chart.HoverPath}" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding !IsScanning}" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="{Binding InaccessiblePaneVisible, Converter={StaticResource PaneWidth}}"
+                                  MinWidth="{Binding InaccessiblePaneVisible, Converter={StaticResource PaneMinWidth}}" />
+            </Grid.ColumnDefinitions>
+            <views:ChartView Grid.Column="0" DataContext="{Binding Chart}" />
+
+            <GridSplitter Grid.Column="1" Width="6"
+                          IsVisible="{Binding InaccessiblePaneVisible}"
+                          ResizeDirection="Columns"
+                          Background="{DynamicResource SystemControlForegroundChromeDisabledLowBrush}"
+                          VerticalAlignment="Stretch" />
+
+            <Grid Grid.Column="2"
+                  IsVisible="{Binding InaccessiblePaneVisible}"
+                  RowDefinitions="Auto,*" Margin="6">
+                <StackPanel Grid.Row="0" Margin="0,0,0,6" Spacing="6">
+                    <Button Content="Relaunch as Administrator"
+                            HorizontalAlignment="Left"
+                            Command="{Binding RelaunchAsAdminCommand}"
+                            IsVisible="{Binding RelaunchAsAdminVisible}" />
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Inaccessible objects (" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding InaccessibleTotalSize}" VerticalAlignment="Center" />
+                        <TextBlock Text="):" VerticalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
+                <ListBox Grid.Row="1"
+                         HorizontalAlignment="Stretch"
+                         ItemsSource="{Binding InaccessiblePaths}">
+                    <ListBox.Styles>
+                        <Style Selector="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListBox.Styles>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}"
+                                       HorizontalAlignment="Stretch"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding}" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
