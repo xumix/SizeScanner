@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
-using Avalonia.Threading;
 using SizeScanner.Avalonia.Abstractions;
 
 namespace SizeScanner.Avalonia.Services;
