@@ -4,6 +4,16 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="AGENTS.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
   <Project Path="ScannerConsole/ScannerConsole.csproj" />
   <Project Path="ScannerCore.Tests/ScannerCore.Tests.csproj" />
   <Project Path="ScannerCore/ScannerCore.csproj" />

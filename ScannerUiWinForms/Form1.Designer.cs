@@ -85,9 +85,9 @@ namespace ScannerUiWinForms
             this.inaccessibleHeaderPanel.SuspendLayout();
             this.mainStatusStrip.SuspendLayout();
             this.SuspendLayout();
-            // 
+            //
             // mainToolStrip
-            // 
+            //
             this.mainToolStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
             this.mainToolStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.browseFolderButtonHost,
@@ -108,9 +108,9 @@ namespace ScannerUiWinForms
             this.mainToolStrip.Size = new System.Drawing.Size(1581, 46);
             this.mainToolStrip.TabIndex = 0;
             this.mainToolStrip.Text = "mainToolStrip";
-            // 
+            //
             // browseFolderButton
-            // 
+            //
             this.browseFolderButton.Name = "browseFolderButton";
             this.browseFolderButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
             this.browseFolderButton.Size = new System.Drawing.Size(78, 33);
@@ -118,14 +118,14 @@ namespace ScannerUiWinForms
             this.browseFolderButton.Text = "Browse...";
             this.browseFolderButton.UseVisualStyleBackColor = true;
             this.browseFolderButton.Click += new System.EventHandler(this.browseFolderButton_Click);
-            // 
+            //
             // browseFolderButtonHost
-            // 
+            //
             this.browseFolderButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.browseFolderButtonHost.Name = "browseFolderButtonHost";
-            // 
+            //
             // rescanButton
-            // 
+            //
             this.rescanButton.Enabled = false;
             this.rescanButton.Name = "rescanButton";
             this.rescanButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
@@ -134,26 +134,26 @@ namespace ScannerUiWinForms
             this.rescanButton.Text = "Rescan";
             this.rescanButton.UseVisualStyleBackColor = true;
             this.rescanButton.Click += new System.EventHandler(this.rescanButton_Click);
-            // 
+            //
             // rescanButtonHost
-            // 
+            //
             this.rescanButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.rescanButtonHost.Name = "rescanButtonHost";
-            // 
+            //
             // toolStripSeparatorBrowse
-            // 
+            //
             this.toolStripSeparatorBrowse.Margin = new System.Windows.Forms.Padding(8, 2, 8, 2);
             this.toolStripSeparatorBrowse.Name = "toolStripSeparatorBrowse";
-            // 
+            //
             // scanProgressBar
-            // 
+            //
             this.scanProgressBar.Margin = new System.Windows.Forms.Padding(4, 2, 8, 2);
             this.scanProgressBar.Maximum = 1000;
             this.scanProgressBar.Name = "scanProgressBar";
             this.scanProgressBar.Size = new System.Drawing.Size(450, 33);
-            // 
+            //
             // cancelScanButton
-            // 
+            //
             this.cancelScanButton.Name = "cancelScanButton";
             this.cancelScanButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
             this.cancelScanButton.Size = new System.Drawing.Size(78, 33);
@@ -161,20 +161,20 @@ namespace ScannerUiWinForms
             this.cancelScanButton.Text = "Cancel";
             this.cancelScanButton.UseVisualStyleBackColor = true;
             this.cancelScanButton.Click += new System.EventHandler(this.cancelScanButton_Click);
-            // 
+            //
             // cancelScanButtonHost
-            // 
+            //
             this.cancelScanButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.cancelScanButtonHost.Name = "cancelScanButtonHost";
             this.cancelScanButtonHost.Visible = false;
-            // 
+            //
             // toolStripSeparatorAfterScan
-            // 
+            //
             this.toolStripSeparatorAfterScan.Margin = new System.Windows.Forms.Padding(8, 2, 8, 2);
             this.toolStripSeparatorAfterScan.Name = "toolStripSeparatorAfterScan";
-            // 
+            //
             // freeSpaceComboBox
-            // 
+            //
             this.freeSpaceComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.freeSpaceComboBox.Items.AddRange(new object[] {
             "Show free space",
@@ -183,16 +183,16 @@ namespace ScannerUiWinForms
             this.freeSpaceComboBox.Name = "freeSpaceComboBox";
             this.freeSpaceComboBox.Size = new System.Drawing.Size(163, 33);
             this.freeSpaceComboBox.SelectedIndexChanged += new System.EventHandler(this.DisplayOptionsChanged);
-            // 
+            //
             // filterLabel
-            // 
+            //
             this.filterLabel.Margin = new System.Windows.Forms.Padding(8, 2, 4, 2);
             this.filterLabel.Name = "filterLabel";
             this.filterLabel.Size = new System.Drawing.Size(54, 33);
             this.filterLabel.Text = "Filter:";
-            // 
+            //
             // filterThresholdComboBox
-            // 
+            //
             this.filterThresholdComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.filterThresholdComboBox.DropDownWidth = 120;
             this.filterThresholdComboBox.Items.AddRange(new object[] {
@@ -209,14 +209,14 @@ namespace ScannerUiWinForms
             this.filterThresholdComboBox.Name = "filterThresholdComboBox";
             this.filterThresholdComboBox.Size = new System.Drawing.Size(110, 33);
             this.filterThresholdComboBox.SelectedIndexChanged += new System.EventHandler(this.DisplayOptionsChanged);
-            // 
+            //
             // toolStripSeparatorBeforePane
-            // 
+            //
             this.toolStripSeparatorBeforePane.Margin = new System.Windows.Forms.Padding(8, 2, 8, 2);
             this.toolStripSeparatorBeforePane.Name = "toolStripSeparatorBeforePane";
-            // 
+            //
             // toggleInaccessiblePaneButton
-            // 
+            //
             this.toggleInaccessiblePaneButton.Name = "toggleInaccessiblePaneButton";
             this.toggleInaccessiblePaneButton.Padding = new System.Windows.Forms.Padding(10, 4, 10, 4);
             this.toggleInaccessiblePaneButton.Size = new System.Drawing.Size(110, 33);
@@ -224,31 +224,31 @@ namespace ScannerUiWinForms
             this.toggleInaccessiblePaneButton.Text = "Toggle Inaccessible";
             this.toggleInaccessiblePaneButton.UseVisualStyleBackColor = true;
             this.toggleInaccessiblePaneButton.Click += new System.EventHandler(this.toggleInaccessiblePaneButton_Click);
-            // 
+            //
             // toggleInaccessiblePaneButtonHost
-            // 
+            //
             this.toggleInaccessiblePaneButtonHost.Margin = new System.Windows.Forms.Padding(4, 2, 4, 2);
             this.toggleInaccessiblePaneButtonHost.Name = "toggleInaccessiblePaneButtonHost";
-            // 
+            //
             // chartToolTipTimer
-            // 
+            //
             this.chartToolTipTimer.Interval = 100;
             this.chartToolTipTimer.Tick += new System.EventHandler(this.chartToolTipTimer_Tick);
-            // 
+            //
             // mainSplitContainer
-            // 
+            //
             this.mainSplitContainer.Dock = System.Windows.Forms.DockStyle.Fill;
             this.mainSplitContainer.FixedPanel = System.Windows.Forms.FixedPanel.Panel2;
             this.mainSplitContainer.Location = new System.Drawing.Point(0, 46);
             this.mainSplitContainer.Margin = new System.Windows.Forms.Padding(4, 5, 4, 5);
             this.mainSplitContainer.Name = "mainSplitContainer";
-            // 
+            //
             // mainSplitContainer.Panel1
-            // 
+            //
             this.mainSplitContainer.Panel1.Controls.Add(this.chartContainerPanel);
-            // 
+            //
             // mainSplitContainer.Panel2
-            // 
+            //
             this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleListBox);
             this.mainSplitContainer.Panel2.Controls.Add(this.inaccessibleHeaderPanel);
             this.mainSplitContainer.Panel2MinSize = 0;
@@ -256,9 +256,9 @@ namespace ScannerUiWinForms
             this.mainSplitContainer.SplitterDistance = 1154;
             this.mainSplitContainer.SplitterWidth = 6;
             this.mainSplitContainer.TabIndex = 1;
-            // 
+            //
             // chartContainerPanel
-            // 
+            //
             this.chartContainerPanel.Controls.Add(this.chartNavPanel);
             this.chartContainerPanel.Controls.Add(this.usageChart);
             this.chartContainerPanel.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -267,9 +267,9 @@ namespace ScannerUiWinForms
             this.chartContainerPanel.Name = "chartContainerPanel";
             this.chartContainerPanel.Size = new System.Drawing.Size(1154, 855);
             this.chartContainerPanel.TabIndex = 0;
-            // 
+            //
             // chartNavPanel
-            // 
+            //
             this.chartNavPanel.AutoSize = true;
             this.chartNavPanel.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.chartNavPanel.BackColor = System.Drawing.SystemColors.Control;
@@ -285,9 +285,9 @@ namespace ScannerUiWinForms
             this.chartNavPanel.TabIndex = 1;
             this.chartNavPanel.Visible = false;
             this.chartNavPanel.WrapContents = false;
-            // 
+            //
             // chartGoUpButton
-            // 
+            //
             this.chartGoUpButton.AutoSize = true;
             this.chartGoUpButton.Margin = new System.Windows.Forms.Padding(0, 0, 4, 0);
             this.chartGoUpButton.Name = "chartGoUpButton";
@@ -297,9 +297,9 @@ namespace ScannerUiWinForms
             this.chartGoUpButton.Text = "Go up";
             this.chartGoUpButton.UseVisualStyleBackColor = true;
             this.chartGoUpButton.Click += new System.EventHandler(this.chartGoUpButton_Click);
-            // 
+            //
             // chartGoToRootButton
-            // 
+            //
             this.chartGoToRootButton.AutoSize = true;
             this.chartGoToRootButton.Margin = new System.Windows.Forms.Padding(0);
             this.chartGoToRootButton.Name = "chartGoToRootButton";
@@ -309,18 +309,18 @@ namespace ScannerUiWinForms
             this.chartGoToRootButton.Text = "Go to root";
             this.chartGoToRootButton.UseVisualStyleBackColor = true;
             this.chartGoToRootButton.Click += new System.EventHandler(this.chartGoToRootButton_Click);
-            // 
+            //
             // chartScopeLabel
-            // 
+            //
             this.chartScopeLabel.AutoEllipsis = true;
             this.chartScopeLabel.AutoSize = true;
             this.chartScopeLabel.Margin = new System.Windows.Forms.Padding(12, 8, 0, 0);
             this.chartScopeLabel.Name = "chartScopeLabel";
             this.chartScopeLabel.TabIndex = 2;
             this.chartScopeLabel.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            // 
+            //
             // usageChart
-            // 
+            //
             chartArea1.Name = "ChartArea1";
             this.usageChart.ChartAreas.Add(chartArea1);
             this.usageChart.ContextMenuStrip = this.chartContextMenu;
@@ -337,9 +337,9 @@ namespace ScannerUiWinForms
             this.usageChart.MouseClick += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseClick);
             this.usageChart.MouseMove += new System.Windows.Forms.MouseEventHandler(this.usageChart_MouseMove);
             this.usageChart.MouseLeave += new System.EventHandler(this.usageChart_MouseLeave);
-            // 
+            //
             // chartContextMenu
-            // 
+            //
             this.chartContextMenu.ImageScalingSize = new System.Drawing.Size(24, 24);
             this.chartContextMenu.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.showInExplorerMenuItem,
@@ -350,30 +350,30 @@ namespace ScannerUiWinForms
             this.chartContextMenu.Closed += new System.Windows.Forms.ToolStripDropDownClosedEventHandler(this.chartContextMenu_Closed);
             this.chartContextMenu.Opening += new System.ComponentModel.CancelEventHandler(this.chartContextMenu_Opening);
             this.chartContextMenu.Opened += new System.EventHandler(this.chartContextMenu_Opened);
-            // 
+            //
             // showInExplorerMenuItem
-            // 
+            //
             this.showInExplorerMenuItem.Name = "showInExplorerMenuItem";
             this.showInExplorerMenuItem.Size = new System.Drawing.Size(134, 32);
-            this.showInExplorerMenuItem.Text = "Show";
+            this.showInExplorerMenuItem.Text = "Open in Explorer";
             this.showInExplorerMenuItem.Click += new System.EventHandler(this.showInExplorerMenuItem_Click);
-            // 
+            //
             // deleteMenuItem
-            // 
+            //
             this.deleteMenuItem.Name = "deleteMenuItem";
             this.deleteMenuItem.Size = new System.Drawing.Size(134, 32);
             this.deleteMenuItem.Text = "Delete";
             this.deleteMenuItem.Click += new System.EventHandler(this.deleteMenuItem_Click);
-            // 
+            //
             // deletePermanentlyMenuItem
-            // 
+            //
             this.deletePermanentlyMenuItem.Name = "deletePermanentlyMenuItem";
             this.deletePermanentlyMenuItem.Size = new System.Drawing.Size(134, 32);
             this.deletePermanentlyMenuItem.Text = "Delete permanently";
             this.deletePermanentlyMenuItem.Click += new System.EventHandler(this.deletePermanentlyMenuItem_Click);
-            // 
+            //
             // inaccessibleListBox
-            // 
+            //
             this.inaccessibleListBox.Dock = System.Windows.Forms.DockStyle.Fill;
             this.inaccessibleListBox.FormattingEnabled = true;
             this.inaccessibleListBox.ItemHeight = 20;
@@ -382,9 +382,9 @@ namespace ScannerUiWinForms
             this.inaccessibleListBox.Name = "inaccessibleListBox";
             this.inaccessibleListBox.Size = new System.Drawing.Size(421, 825);
             this.inaccessibleListBox.TabIndex = 0;
-            // 
+            //
             // inaccessibleHeaderPanel
-            // 
+            //
             this.inaccessibleHeaderPanel.AutoSize = true;
             this.inaccessibleHeaderPanel.Padding = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.inaccessibleHeaderPanel.Controls.Add(this.inaccessibleHeaderPrefixLabel);
@@ -397,9 +397,9 @@ namespace ScannerUiWinForms
             this.inaccessibleHeaderPanel.Name = "inaccessibleHeaderPanel";
             this.inaccessibleHeaderPanel.Size = new System.Drawing.Size(421, 20);
             this.inaccessibleHeaderPanel.TabIndex = 3;
-            // 
+            //
             // inaccessibleHeaderPrefixLabel
-            // 
+            //
             this.inaccessibleHeaderPrefixLabel.AutoSize = true;
             this.inaccessibleHeaderPrefixLabel.Location = new System.Drawing.Point(0, 0);
             this.inaccessibleHeaderPrefixLabel.Margin = new System.Windows.Forms.Padding(0);
@@ -407,9 +407,9 @@ namespace ScannerUiWinForms
             this.inaccessibleHeaderPrefixLabel.Size = new System.Drawing.Size(196, 20);
             this.inaccessibleHeaderPrefixLabel.TabIndex = 1;
             this.inaccessibleHeaderPrefixLabel.Text = "Inaccessible objects ( total";
-            // 
+            //
             // inaccessibleTotalSizeLabel
-            // 
+            //
             this.inaccessibleTotalSizeLabel.AutoSize = true;
             this.inaccessibleTotalSizeLabel.Location = new System.Drawing.Point(196, 0);
             this.inaccessibleTotalSizeLabel.Margin = new System.Windows.Forms.Padding(0);
@@ -417,9 +417,9 @@ namespace ScannerUiWinForms
             this.inaccessibleTotalSizeLabel.Size = new System.Drawing.Size(62, 20);
             this.inaccessibleTotalSizeLabel.TabIndex = 4;
             this.inaccessibleTotalSizeLabel.Text = "0 Bytes";
-            // 
+            //
             // inaccessibleHeaderSuffixLabel
-            // 
+            //
             this.inaccessibleHeaderSuffixLabel.AutoSize = true;
             this.inaccessibleHeaderSuffixLabel.Location = new System.Drawing.Point(258, 0);
             this.inaccessibleHeaderSuffixLabel.Margin = new System.Windows.Forms.Padding(0);
@@ -427,9 +427,9 @@ namespace ScannerUiWinForms
             this.inaccessibleHeaderSuffixLabel.Size = new System.Drawing.Size(18, 20);
             this.inaccessibleHeaderSuffixLabel.TabIndex = 5;
             this.inaccessibleHeaderSuffixLabel.Text = "):";
-            // 
+            //
             // relaunchAsAdminButton
-            // 
+            //
             this.relaunchAsAdminButton.AutoSize = true;
             this.relaunchAsAdminButton.Margin = new System.Windows.Forms.Padding(12, 4, 4, 4);
             this.relaunchAsAdminButton.Name = "relaunchAsAdminButton";
@@ -440,15 +440,15 @@ namespace ScannerUiWinForms
             this.relaunchAsAdminButton.UseVisualStyleBackColor = true;
             this.relaunchAsAdminButton.Visible = false;
             this.relaunchAsAdminButton.Click += new System.EventHandler(this.relaunchAsAdminButton_Click);
-            // 
+            //
             // chartToolTip
-            // 
+            //
             this.chartToolTip.OwnerDraw = true;
             this.chartToolTip.Popup += new System.Windows.Forms.PopupEventHandler(this.chartToolTip_Popup);
             this.chartToolTip.Draw += new System.Windows.Forms.DrawToolTipEventHandler(this.chartToolTip_Draw);
-            // 
+            //
             // mainStatusStrip
-            // 
+            //
             this.mainStatusStrip.ImageScalingSize = new System.Drawing.Size(24, 24);
             this.mainStatusStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripStatusLabelStatus,
@@ -460,22 +460,22 @@ namespace ScannerUiWinForms
             this.mainStatusStrip.SizingGrip = false;
             this.mainStatusStrip.TabIndex = 2;
             this.mainStatusStrip.Text = "mainStatusStrip";
-            // 
+            //
             // toolStripStatusLabelStatus
-            // 
+            //
             this.toolStripStatusLabelStatus.Name = "toolStripStatusLabelStatus";
             this.toolStripStatusLabelStatus.Size = new System.Drawing.Size(52, 19);
             this.toolStripStatusLabelStatus.Text = "Ready";
-            // 
+            //
             // toolStripStatusLabelDetails
-            // 
+            //
             this.toolStripStatusLabelDetails.Name = "toolStripStatusLabelDetails";
             this.toolStripStatusLabelDetails.Size = new System.Drawing.Size(1466, 19);
             this.toolStripStatusLabelDetails.Spring = true;
             this.toolStripStatusLabelDetails.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            // 
+            //
             // Form1
-            // 
+            //
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 20F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1581, 912);

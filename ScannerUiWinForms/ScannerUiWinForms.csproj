@@ -6,7 +6,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>ScannerUiWinForms</RootNamespace>
-    <AssemblyName>ScannerUiWinForms</AssemblyName>
+    <AssemblyName>SizeScanner</AssemblyName>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
@@ -14,7 +14,9 @@
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <ApplicationIcon>icons\main.ico</ApplicationIcon>
   </PropertyGroup>
-
+  <PropertyGroup>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\ScannerCore\ScannerCore.csproj" />
     <PackageReference Include="WinForms.DataVisualization" />
