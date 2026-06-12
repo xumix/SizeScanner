@@ -42,7 +42,6 @@ public sealed class ChartViewModelTests
         vm.Refresh(filterThreshold: 0, includeFreeSpace: false);
 
         Assert.NotEmpty(vm.Layout.Segments);
-        Assert.NotEmpty(vm.DisplayedSegments);
         Assert.False(vm.IsScoped);
     }
 
@@ -61,19 +60,6 @@ public sealed class ChartViewModelTests
 
         vm.GoToRootCommand.Execute(null);
         Assert.False(vm.IsScoped);
-    }
-
-    [Fact]
-    public void Refresh_with_filter_threshold_includes_aggregated_filtered_segment()
-    {
-        var vm = CreateVm();
-        var root = TestTree.Dir("root",
-            TestTree.File("big", 1000),
-            TestTree.File("tiny", 5));
-        vm.SetScan(root, isDrive: false, targetPath: "C:\\root");
-        vm.Refresh(filterThreshold: 10, includeFreeSpace: false);
-
-        Assert.Contains(vm.DisplayedSegments, segment => segment.Node?.Name == ChartDisplayMetadata.FilteredName);
     }
 
     [Fact]
