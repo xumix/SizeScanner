@@ -31,7 +31,7 @@ internal static class UiIcons
 
         using var font = new Font(IconFontName, size * 0.7f, FontStyle.Regular, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(color);
-        var format = new StringFormat
+        using var format = new StringFormat
         {
             Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center
