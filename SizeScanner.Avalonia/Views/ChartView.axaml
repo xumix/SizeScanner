@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="using:System"
              xmlns:vm="using:SizeScanner.Avalonia.ViewModels"
              xmlns:views="using:SizeScanner.Avalonia.Views"
              x:Class="SizeScanner.Avalonia.Views.ChartView"
@@ -22,8 +23,11 @@
                                     Focusable="True"
                                     ToolTip.ShowDelay="100">
             <ToolTip.Tip>
-                <TextBlock Text="{Binding HoverToolTip}"
-                           FontFamily="Consolas,Courier New,monospace" />
+                <ToolTip MaxWidth="{x:Static sys:Double.PositiveInfinity}" Padding="6">
+                    <TextBlock Text="{Binding HoverToolTip}"
+                               FontFamily="Consolas,Courier New,monospace"
+                               TextWrapping="NoWrap" />
+                </ToolTip>
             </ToolTip.Tip>
         </views:SunburstChartControl>
     </Grid>

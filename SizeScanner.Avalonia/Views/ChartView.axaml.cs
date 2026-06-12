@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -13,6 +14,7 @@ namespace SizeScanner.Avalonia.Views;
 public partial class ChartView : UserControl
 {
     private SunburstChartControl _chart = null!;
+    private ChartViewModel? _subscribedVm;
 
     public ChartView()
     {
@@ -22,11 +24,38 @@ public partial class ChartView : UserControl
         _chart.PointerMoved += OnPointerMoved;
         _chart.PointerExited += OnPointerExited;
         _chart.PointerPressed += OnPointerPressed;
+        DataContextChanged += (_, _) => SubscribeViewModel();
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
     private ChartViewModel? Vm => DataContext as ChartViewModel;
+
+    private void SubscribeViewModel()
+    {
+        if (_subscribedVm is not null)
+            _subscribedVm.PropertyChanged -= OnViewModelPropertyChanged;
+
+        _subscribedVm = Vm;
+        if (_subscribedVm is not null)
+            _subscribedVm.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ChartViewModel.HoverToolTip))
+            return;
+
+        if (!ToolTip.GetIsOpen(_chart))
+            return;
+
+        if (ToolTip.GetTip(_chart) is ToolTip toolTip)
+        {
+            toolTip.InvalidateMeasure();
+            if (toolTip.Content is Control content)
+                content.InvalidateMeasure();
+        }
+    }
 
     private FsItem? HitTest(Point position)
     {
