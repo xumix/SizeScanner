@@ -9,6 +9,8 @@ Windows-only disk usage visualizer (.NET 10). Inspired by Steffen Gerlach's Scan
 | `ScannerCore/` | Scan engine + `FsItem` tree model — **put all filesystem logic here** |
 | `ScannerCore.Tests/` | xUnit unit and integration tests for `ScannerCore` |
 | `ScannerUiWinForms/` | Production WinForms UI (`Form1.cs` = orchestration; `Form1.Designer.cs` = controls) |
+| `SizeScanner.Avalonia/` | Avalonia UI (MVVM + custom sunburst chart) — modern front-end; Windows-only due to ScannerCore |
+| `SizeScanner.Avalonia.Tests/` | xUnit tests for Avalonia chart builder, services, and view-models |
 | `ScannerConsole/` | Manual perf/progress harness only — not shipped |
 
 Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions live in `Directory.Packages.props`. CI is defined in `.gitlab-ci.yml` (GitLab) and `.github/workflows/` (GitHub Actions); both require Windows runners.
@@ -37,6 +39,7 @@ dotnet restore SizeScanner.slnx
 dotnet build SizeScanner.slnx -c Debug
 dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release
 dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
+dotnet run --project .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj
 
 # Scanner harness (path argument optional):
 dotnet run --project .\ScannerConsole\ScannerConsole.csproj -- C:\some\folder
@@ -64,6 +67,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 
 - Keep P/Invoke and native structs inside `DirectoryScanner` — do not scatter Win32 calls into UI.
 - WinForms: event handlers and orchestration in `Form1.cs`; control layout/properties in `Form1.Designer.cs` only.
+- Avalonia UI lives in `SizeScanner.Avalonia/`; keep platform/IO behind interfaces in `Abstractions/` with Windows implementations in `Services/`. Chart building belongs in `Charting/SunburstChartBuilder.cs`; view-models in `ViewModels/`.
 - Chart rendering belongs in `ChartMapper.cs`; Explorer open and delete in `FileSystemActions.cs`; scan lifecycle in `ScanSession.cs`.
 - Settings persist to `%AppData%\SizeScanner\settings.json` via `UserSettings.cs`.
 - `Humanize` (`Humanize.cs`) is the single place for size display strings (`"<Access Denied>"`, `"<Empty>"`, KB/MB suffixes). Uses invariant culture for numeric formatting.
