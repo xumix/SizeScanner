@@ -48,7 +48,7 @@ dotnet publish .\ScannerUiWinForms\ScannerUiWinForms.csproj -c Release -r win-x6
 **NuGet packages** (versions in `Directory.Packages.props`):
 - `WinForms.DataVisualization` — chart control for `ScannerUiWinForms`
 - `Spectre.Console` — console harness output only
-- `xunit`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` — test project
+- `xunit.v3`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` — test project
 - `MinVer` — semantic versioning for `ScannerUiWinForms`
 
 ## CI and release

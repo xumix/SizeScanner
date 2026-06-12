@@ -37,11 +37,11 @@ namespace ScannerCore
             _isDriveScan = true;
 
             var root = ScanUnitInternal(driveName, true, cancellationToken, progress);
-            root.Items!.InsertRange(0, new[]
-            {
-                new FsItem(DriveScanMetadata.FreeSpaceName, drive.TotalFreeSpace, false),
-                new FsItem(DriveScanMetadata.InaccessibleName, Math.Max(0, _occupied - _total), false)
-            });
+            var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, drive.TotalFreeSpace, false);
+            var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, Math.Max(0, _occupied - _total), false);
+            freeSpace.Parent = root;
+            inaccessible.Parent = root;
+            root.Items!.InsertRange(0, new[] { freeSpace, inaccessible });
             return root;
         }
 
@@ -74,14 +74,17 @@ namespace ScannerCore
 
             CurrentScanned = scanObject;
             ReportProgress(force: false);
-            item.Items = _scanner.Scan(scanObject, ref _total);
-            if (item.Items == null)
+            var children = _scanner.Scan(scanObject, ref _total);
+            if (children == null)
             {
+                item.Items = null;
                 _problematic.Add(scanObject);
                 return;
             }
 
-            for (var i = item.Items.Count - 1; i >= 0; i--)
+            item.AttachChildren(children);
+
+            for (var i = item.Items!.Count - 1; i >= 0; i--)
             {
                 var child = item.Items[i];
                 if (child.IsDir)

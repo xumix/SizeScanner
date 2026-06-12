@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System.Linq;
 using System.Threading;
 using ScannerCore;
 using Xunit;
@@ -71,5 +72,20 @@ public sealed class DriveScannerTests
         scanner.ScanDirectory(temp.Path, CancellationToken.None);
 
         Assert.Empty(scanner.Inaccessible);
+    }
+
+    [Fact]
+    public void ScanDirectory_sets_parent_links()
+    {
+        using var temp = new TemporaryDirectory();
+        temp.CreateFile("sub/file.txt", 10);
+
+        var root = new DriveScanner().ScanDirectory(temp.Path, CancellationToken.None);
+
+        Assert.Null(root.Parent);
+        var sub = root.Items!.Single(i => i.Name == "sub");
+        Assert.Same(root, sub.Parent);
+        var file = sub.Items!.Single();
+        Assert.Same(sub, file.Parent);
     }
 }
