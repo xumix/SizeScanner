@@ -23,7 +23,7 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_NOLOGO: true
       Solution_Name: SizeScanner.slnx
-      App_Project_Path: ScannerUiWinForms/ScannerUiWinForms.csproj
+      App_Project_Path: SizeScanner.Avalonia/SizeScanner.Avalonia.csproj
       Configuration: Release
 
     steps:

@@ -26,7 +26,7 @@ From the repository root:
 ```powershell
 dotnet restore SizeScanner.slnx
 dotnet build SizeScanner.slnx -c Debug
-dotnet run --project .\ScannerUiWinForms\ScannerUiWinForms.csproj
+dotnet run --project .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj
 ```
 
 When the window opens, click a drive letter in the toolbar (for example `C:\`) or **Browse...** to pick a folder, then wait for the progress bar to finish.

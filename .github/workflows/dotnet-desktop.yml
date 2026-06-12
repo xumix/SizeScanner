@@ -36,7 +36,7 @@ jobs:
       DOTNET_NOLOGO: true
       Solution_Name: SizeScanner.slnx
       Test_Project_Path: ScannerCore.Tests/ScannerCore.Tests.csproj
-      App_Project_Path: ScannerUiWinForms/ScannerUiWinForms.csproj
+      App_Project_Path: SizeScanner.Avalonia/SizeScanner.Avalonia.csproj
 
     steps:
       - name: Checkout
@@ -102,6 +102,5 @@ jobs:
         with:
           name: Desktop App (${{ matrix.configuration }})
           path: |
-            ScannerUiWinForms/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
             SizeScanner.Avalonia/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
             ScannerCore/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
