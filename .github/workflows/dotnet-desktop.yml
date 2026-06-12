@@ -65,6 +65,15 @@ jobs:
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
+      - name: Execute Avalonia UI tests
+        run: >
+          dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj
+          -c ${{ matrix.configuration }}
+          --verbosity normal
+          --logger "trx;LogFileName=avalonia-test-results.trx"
+          --collect:"XPlat Code Coverage"
+          --results-directory TestResults
+
       - name: Restore the application
         run: dotnet restore $env:Solution_Name -r win-x64
         env:
@@ -94,4 +103,5 @@ jobs:
           name: Desktop App (${{ matrix.configuration }})
           path: |
             ScannerUiWinForms/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
+            SizeScanner.Avalonia/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
             ScannerCore/bin/${{ matrix.configuration }}/net10.0-windows/win-x64/
