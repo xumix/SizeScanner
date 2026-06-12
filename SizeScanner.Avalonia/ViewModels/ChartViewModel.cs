@@ -38,6 +38,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     [ObservableProperty] private bool _isScoped;
     [ObservableProperty] private string _scopeLabel = string.Empty;
     [ObservableProperty] private string _hoverPath = string.Empty;
+    [ObservableProperty] private string _hoverToolTip = string.Empty;
 
     public FsItem? ContextTarget { get; private set; }
     public string ContextTargetPath { get; private set; } = string.Empty;
@@ -73,11 +74,13 @@ public sealed partial class ChartViewModel : ViewModelBase
 
         var chain = AncestorChain(node);
         HoverPath = BuildFullPath(chain);
+        HoverToolTip = ChartHoverToolTip.BuildText(chain);
     }
 
     public void ClearHover()
     {
         HoverPath = string.Empty;
+        HoverToolTip = string.Empty;
     }
 
     public bool CanScopeTo(FsItem? item)

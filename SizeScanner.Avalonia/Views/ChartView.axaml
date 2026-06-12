@@ -19,6 +19,12 @@
 
         <views:SunburstChartControl x:Name="PART_Chart"
                                     Chart="{Binding Layout}"
-                                    Focusable="True" />
+                                    Focusable="True"
+                                    ToolTip.ShowDelay="100">
+            <ToolTip.Tip>
+                <TextBlock Text="{Binding HoverToolTip}"
+                           FontFamily="Consolas,Courier New,monospace" />
+            </ToolTip.Tip>
+        </views:SunburstChartControl>
     </Grid>
 </UserControl>

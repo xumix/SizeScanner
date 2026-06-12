@@ -76,7 +76,7 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
-    public void Hover_builds_status_path_only()
+    public void Hover_builds_status_path_and_tooltip()
     {
         var vm = CreateVm();
         var root = SampleDriveRoot();
@@ -87,8 +87,11 @@ public sealed class ChartViewModelTests
         vm.Hover(kernel);
 
         Assert.Contains("kernel.sys", vm.HoverPath);
+        Assert.Contains("Windows", vm.HoverToolTip);
+        Assert.Contains("` kernel.sys", vm.HoverToolTip);
 
         vm.ClearHover();
         Assert.Equal(string.Empty, vm.HoverPath);
+        Assert.Equal(string.Empty, vm.HoverToolTip);
     }
 }

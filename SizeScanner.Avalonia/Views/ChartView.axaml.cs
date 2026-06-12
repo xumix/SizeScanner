@@ -47,6 +47,7 @@ public partial class ChartView : UserControl
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (Vm is null) return;
+        ToolTip.SetIsOpen(_chart, false);
         var props = e.GetCurrentPoint(_chart).Properties;
         var node = HitTest(e.GetPosition(_chart));
 
