@@ -18,5 +18,6 @@
   <Project Path="ScannerCore.Tests/ScannerCore.Tests.csproj" />
   <Project Path="ScannerCore/ScannerCore.csproj" />
   <Project Path="ScannerUiWinForms/ScannerUiWinForms.csproj" />
+  <Project Path="SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj" />
   <Project Path="SizeScanner.Avalonia/SizeScanner.Avalonia.csproj" />
 </Solution>
