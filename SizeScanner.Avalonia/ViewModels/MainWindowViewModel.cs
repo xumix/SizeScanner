@@ -208,8 +208,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         if (_scanRoot is null) return;
         var percent = 0.0025f * FilterIndex;
         var includeFreeSpace = FreeSpaceIndex == 0;
-        var threshold = _scan.Scanner.GetDisplayThreshold(percent, includeFreeSpace);
-        Chart.Refresh(threshold, includeFreeSpace);
+        Chart.Refresh(percent, includeFreeSpace);
     }
 
     partial void OnFilterIndexChanged(int value) => OnDisplayOptionsChanged();

@@ -39,7 +39,7 @@ public sealed class ChartViewModelTests
     {
         var vm = CreateVm();
         vm.SetScan(SampleDriveRoot(), isDrive: true, targetPath: "C:\\");
-        vm.Refresh(filterThreshold: 0, includeFreeSpace: false);
+        vm.Refresh(filterPercent: 0f, includeFreeSpace: false);
 
         Assert.NotEmpty(vm.Layout.Segments);
         Assert.False(vm.IsScoped);
@@ -51,7 +51,7 @@ public sealed class ChartViewModelTests
         var vm = CreateVm();
         var root = SampleDriveRoot();
         vm.SetScan(root, isDrive: true, targetPath: "C:\\");
-        vm.Refresh(0, includeFreeSpace: false);
+        vm.Refresh(0f, includeFreeSpace: false);
 
         var windows = root.Items![2];
         Assert.True(vm.TryScopeAt(windows));
@@ -84,7 +84,7 @@ public sealed class ChartViewModelTests
         var vm = CreateVm();
         var root = SampleDriveRoot();
         vm.SetScan(root, isDrive: true, targetPath: "C:\\");
-        vm.Refresh(0, includeFreeSpace: true);
+        vm.Refresh(0f, includeFreeSpace: true);
 
         var freeSpace = root.Items![0];
         var file = root.Items![3];
@@ -98,7 +98,7 @@ public sealed class ChartViewModelTests
         var vm = CreateVm();
         var root = SampleDriveRoot();
         vm.SetScan(root, isDrive: true, targetPath: "C:\\");
-        vm.Refresh(0, includeFreeSpace: false);
+        vm.Refresh(0f, includeFreeSpace: false);
 
         var kernel = root.Items![2].Items![0]; // Windows/kernel.sys
         vm.Hover(kernel);
@@ -110,5 +110,44 @@ public sealed class ChartViewModelTests
         vm.ClearHover();
         Assert.Equal(string.Empty, vm.HoverPath);
         Assert.Equal(string.Empty, vm.HoverToolTip);
+    }
+
+    [Fact]
+    public void Scoping_recomputes_filter_threshold_from_display_root()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File("huge", 100_000),
+            TestTree.Dir("target",
+                TestTree.File("big", 400),
+                TestTree.File("medium", 100),
+                TestTree.File("tiny", 5)));
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        const float filterPercent = 0.01f;
+        vm.Refresh(filterPercent, includeFreeSpace: false);
+
+        var filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(505, filteredAtRoot.Size);
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "big");
+
+        var target = root.Items![1];
+        Assert.True(vm.TryScopeAt(target));
+
+        filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(5, filteredAtRoot.Size);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "big");
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "medium");
+
+        vm.GoToRootCommand.Execute(null);
+
+        filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(505, filteredAtRoot.Size);
     }
 }

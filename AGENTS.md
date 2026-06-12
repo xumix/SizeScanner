@@ -70,7 +70,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 - Settings persist to `%AppData%\SizeScanner\settings.json` via `JsonSettingsStore` and `Models/UserSettings.cs`.
 - `Humanize` (`ScannerCore/Humanize.cs`) is the single place for size display strings (`"<Access Denied>"`, `"<Empty>"`, KB/MB suffixes). Uses invariant culture for numeric formatting.
 - Synthetic drive entries: use `DriveScanMetadata` constants and helpers — do not hard-code `[Free space]` / `[Inaccessible]` or index `1`.
-- Filter threshold: `0.0025f * selectedFilterIndex` × total/occupied bytes (`DriveScanner.GetDisplayThreshold`).
+- Filter threshold: `0.0025f × FilterIndex × display-root total`, where display-root total is the sum of positive child sizes on `ChartViewModel.GetDisplayRoot()` (matches chart denominator via `FilterThreshold.GetDisplayTotal`).
 
 ## Key files
 

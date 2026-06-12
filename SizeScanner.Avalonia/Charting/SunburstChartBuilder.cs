@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System.Collections.Generic;
-using System.Linq;
 using Avalonia.Media;
 using ScannerCore;
 
@@ -40,7 +39,7 @@ public sealed class SunburstChartBuilder
         if (_ringCount == 0)
             return new SunburstChart([], 0, 0);
 
-        var total = PositiveSum(root.Items!);
+        var total = FilterThreshold.GetDisplayTotal(root);
         if (total <= 0)
             return new SunburstChart([], 0, 0);
 
@@ -228,6 +227,4 @@ public sealed class SunburstChartBuilder
             _ => paletteColor
         };
 
-    private static long PositiveSum(IEnumerable<FsItem> items) =>
-        items.Sum(item => System.Math.Max(0, item.Size));
 }

@@ -23,7 +23,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     private FsItem? _chartRootWithoutSynthetic;
     private bool _isDriveScan;
     private bool _includeFreeSpace;
-    private long _filterThreshold;
+    private float _filterPercent;
     private string _targetPath = string.Empty;
     private FsItem? _scopedRoot;
     private string _displayRootPath = string.Empty;
@@ -53,9 +53,9 @@ public sealed partial class ChartViewModel : ViewModelBase
         UpdateScopeState();
     }
 
-    public void Refresh(long filterThreshold, bool includeFreeSpace)
+    public void Refresh(float filterPercent, bool includeFreeSpace)
     {
-        _filterThreshold = filterThreshold;
+        _filterPercent = filterPercent;
         _includeFreeSpace = includeFreeSpace;
         if (_scanRoot is null)
         {
@@ -63,7 +63,9 @@ public sealed partial class ChartViewModel : ViewModelBase
             return;
         }
 
-        Layout = _builder.Build(GetDisplayRoot(), _filterThreshold);
+        var displayRoot = GetDisplayRoot();
+        var threshold = FilterThreshold.Compute(_filterPercent, displayRoot);
+        Layout = _builder.Build(displayRoot, threshold);
     }
 
     public FsItem? ResolveNode(SunburstSegment? segment) => segment?.Node;
@@ -99,7 +101,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         if (!CanScopeTo(node)) return false;
         _scopedRoot = node;
         UpdateScopeState();
-        Refresh(_filterThreshold, _includeFreeSpace);
+        Refresh(_filterPercent, _includeFreeSpace);
         return true;
     }
 
@@ -111,7 +113,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         var parent = _scopedRoot.Parent;
         _scopedRoot = parent is null || ReferenceEquals(parent, _scanRoot) ? null : parent;
         UpdateScopeState();
-        Refresh(_filterThreshold, _includeFreeSpace);
+        Refresh(_filterPercent, _includeFreeSpace);
     }
 
     [RelayCommand]
@@ -120,7 +122,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         if (_scopedRoot is null) return;
         _scopedRoot = null;
         UpdateScopeState();
-        Refresh(_filterThreshold, _includeFreeSpace);
+        Refresh(_filterPercent, _includeFreeSpace);
     }
 
     public void SetContextTarget(FsItem? node)
