@@ -5,6 +5,8 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
+using SizeScanner.Avalonia.Abstractions;
+using SizeScanner.Avalonia.Services;
 using SizeScanner.Avalonia.ViewModels;
 using SizeScanner.Avalonia.Views;
 
@@ -22,10 +24,7 @@ public sealed class App : Application
             ConfigureServices(services);
             var provider = services.BuildServiceProvider();
 
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = provider.GetRequiredService<MainWindowViewModel>()
-            };
+            desktop.MainWindow = provider.GetRequiredService<MainWindow>();
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -33,6 +32,17 @@ public sealed class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
+        services.AddSingleton<ITopLevelProvider, TopLevelProvider>();
+        services.AddSingleton<ISettingsStore, JsonSettingsStore>();
+        services.AddSingleton<IScanService, ScanService>();
+        services.AddSingleton<IFileSystemActions, WindowsFileSystemActions>();
+        services.AddSingleton<IElevationService, WindowsElevationService>();
+        services.AddSingleton<IDriveProvider, DriveProvider>();
+        services.AddSingleton<IFolderPicker, AvaloniaFolderPicker>();
+        services.AddSingleton<IDialogService, AvaloniaDialogService>();
+
+        services.AddSingleton<ChartViewModel>();
         services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<MainWindow>();
     }
 }
