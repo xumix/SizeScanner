@@ -66,9 +66,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 
 - Keep P/Invoke and native structs inside `DirectoryScanner` — do not scatter Win32 calls into UI.
 - Avalonia UI lives in `SizeScanner.Avalonia/`; keep platform/IO behind interfaces in `Abstractions/` with Windows implementations in `Services/`. Chart building belongs in `Charting/SunburstChartBuilder.cs`; view-models in `ViewModels/`.
-- Chart rendering belongs in `SunburstChartBuilder.cs` and `SunburstChartControl.cs`; Explorer open and delete in `WindowsFileSystemActions.cs`; scan lifecycle in `ScanService.cs`.
-- Settings persist to `%AppData%\SizeScanner\settings.json` via `JsonSettingsStore` and `Models/UserSettings.cs`.
-- `Humanize` (`ScannerCore/Humanize.cs`) is the single place for size display strings (`"<Access Denied>"`, `"<Empty>"`, KB/MB suffixes). Uses invariant culture for numeric formatting.
+- Settings persist to `%AppData%\SizeScanner\settings.avalonia.json` via `JsonSettingsStore` and `Models/UserSettings.cs`.
 - Synthetic drive entries: use `DriveScanMetadata` constants and helpers — do not hard-code `[Free space]` / `[Inaccessible]` or index `1`.
 - Filter threshold: `0.0025f × FilterIndex × display-root total`, where display-root total is the sum of positive child sizes on `ChartViewModel.GetDisplayRoot()` (matches chart denominator via `FilterThreshold.GetDisplayTotal`).
 
