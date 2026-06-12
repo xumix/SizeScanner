@@ -4,7 +4,7 @@ A Windows disk-usage visualizer inspired by [Steffen Gerlach's Scanner](http://w
 
 Pick a drive or folder, wait for the scan, and explore where space goes through nested doughnut charts. Hover for names and sizes; right-click a slice to open it in Explorer or delete it.
 
-![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/SSSS01.png)
+![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/main_window.png)
 
 Compared with the original Scanner2 tool, SizeScanner:
 

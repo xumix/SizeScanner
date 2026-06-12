@@ -44,7 +44,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <Separator Height="NaN" Width="1" />
+                <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
                 <ProgressBar Width="280" Minimum="0" Maximum="100"
                              Value="{Binding ProgressValue}"
                              IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
@@ -100,15 +100,15 @@
                   IsVisible="{Binding InaccessiblePaneVisible}"
                   RowDefinitions="Auto,*" Margin="6">
                 <StackPanel Grid.Row="0" Margin="0,0,0,6" Spacing="6">
+                    <Button Content="Relaunch as Administrator"
+                            HorizontalAlignment="Left"
+                            Command="{Binding RelaunchAsAdminCommand}"
+                            IsVisible="{Binding RelaunchAsAdminVisible}" />
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="Inaccessible objects (" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding InaccessibleTotalSize}" VerticalAlignment="Center" />
                         <TextBlock Text="):" VerticalAlignment="Center" />
                     </StackPanel>
-                    <Button Content="Relaunch as administrator"
-                            HorizontalAlignment="Left"
-                            Command="{Binding RelaunchAsAdminCommand}"
-                            IsVisible="{Binding RelaunchAsAdminVisible}" />
                 </StackPanel>
                 <ListBox Grid.Row="1"
                          HorizontalAlignment="Stretch"
