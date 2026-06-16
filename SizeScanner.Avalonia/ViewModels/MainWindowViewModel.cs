@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScannerCore;
@@ -16,6 +17,8 @@ namespace SizeScanner.Avalonia.ViewModels;
 
 public sealed partial class MainWindowViewModel : ViewModelBase
 {
+    public const int DefaultInaccessiblePaneWidth = 360;
+
     private readonly IScanService _scan;
     private readonly ISettingsStore _settingsStore;
     private readonly IDriveProvider _driveProvider;
@@ -64,10 +67,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private bool _relaunchAsAdminVisible;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(InaccessiblePaneVisible))]
+    [NotifyPropertyChangedFor(nameof(InaccessiblePaneVisible), nameof(InaccessiblePaneColumnWidth), nameof(InaccessiblePaneColumnMinWidth))]
     private bool _inaccessiblePaneCollapsed;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(InaccessiblePaneColumnWidth))]
+    private double _inaccessiblePaneWidth = DefaultInaccessiblePaneWidth;
+
     public bool InaccessiblePaneVisible => !InaccessiblePaneCollapsed;
+
+    public GridLength InaccessiblePaneColumnWidth =>
+        InaccessiblePaneVisible ? new GridLength(InaccessiblePaneWidth) : new GridLength(0);
+
+    public double InaccessiblePaneColumnMinWidth =>
+        InaccessiblePaneVisible ? DefaultInaccessiblePaneWidth : 0;
 
     private static readonly string[] FilterLabels =
     [
@@ -88,6 +101,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         FreeSpaceIndex = settings.FreeSpaceIndex;
         FilterIndex = settings.FilterIndex;
         InaccessiblePaneCollapsed = settings.InaccessiblePaneCollapsed;
+        InaccessiblePaneWidth = settings.SplitterDistance > 0
+            ? settings.SplitterDistance
+            : DefaultInaccessiblePaneWidth;
         _suppressOptionChanges = false;
     }
 

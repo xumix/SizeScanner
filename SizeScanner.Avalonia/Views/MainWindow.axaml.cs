@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System;
 using Avalonia.Controls;
 using SizeScanner.Avalonia.Abstractions;
 using SizeScanner.Avalonia.ViewModels;
@@ -30,7 +31,12 @@ public partial class MainWindow : Window
     protected override void OnClosing(WindowClosingEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
-            vm.SaveOnClose((int)Width, (int)Height, splitterDistance: 0);
+        {
+            var splitterDistance = vm.InaccessiblePaneVisible
+                ? (int)Math.Round(MainContentGrid.ColumnDefinitions[2].ActualWidth)
+                : (int)Math.Round(vm.InaccessiblePaneWidth);
+            vm.SaveOnClose((int)Width, (int)Height, splitterDistance);
+        }
         base.OnClosing(e);
     }
 }

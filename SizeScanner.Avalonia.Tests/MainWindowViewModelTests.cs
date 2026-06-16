@@ -31,8 +31,9 @@ public sealed class MainWindowViewModelTests
 
     private sealed class FakeSettings : ISettingsStore
     {
+        public UserSettings Loaded { get; set; } = new();
         public UserSettings Saved { get; private set; } = new();
-        public UserSettings Load() => new();
+        public UserSettings Load() => Loaded;
         public void Save(UserSettings settings) => Saved = settings;
     }
 
@@ -85,7 +86,28 @@ public sealed class MainWindowViewModelTests
         Assert.Single(vm.Drives);
         Assert.Equal(4, vm.FilterIndex);
         Assert.Equal(1, vm.FreeSpaceIndex);
+        Assert.Equal(MainWindowViewModel.DefaultInaccessiblePaneWidth, vm.InaccessiblePaneWidth);
         Assert.False(vm.IsScanning);
+    }
+
+    [Fact]
+    public void Initialize_restores_splitter_distance_from_settings()
+    {
+        var settings = new FakeSettings { Loaded = new UserSettings { SplitterDistance = 520 } };
+        var vm = CreateVm(DriveRoot(), settings);
+        vm.Initialize();
+
+        Assert.Equal(520, vm.InaccessiblePaneWidth);
+    }
+
+    [Fact]
+    public void SaveOnClose_persists_splitter_distance()
+    {
+        var settings = new FakeSettings();
+        var vm = CreateVm(DriveRoot(), settings);
+        vm.SaveOnClose(1000, 700, 480);
+
+        Assert.Equal(480, settings.Saved.SplitterDistance);
     }
 
     [Fact]

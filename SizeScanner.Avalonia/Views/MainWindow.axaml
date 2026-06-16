@@ -2,18 +2,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:SizeScanner.Avalonia.ViewModels"
         xmlns:views="using:SizeScanner.Avalonia.Views"
-        xmlns:conv="using:SizeScanner.Avalonia.Converters"
         xmlns:models="using:SizeScanner.Avalonia.Models"
         x:Class="SizeScanner.Avalonia.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/main.ico"
         Width="1100" Height="720" MinWidth="720" MinHeight="480"
         Title="SizeScanner">
-
-    <Window.Resources>
-        <conv:BoolToGridLengthConverter x:Key="PaneWidth" />
-        <conv:BoolToPaneMinWidthConverter x:Key="PaneMinWidth" />
-    </Window.Resources>
 
     <Window.KeyBindings>
         <KeyBinding Gesture="F5" Command="{Binding RescanCommand}" />
@@ -81,12 +75,12 @@
             </StackPanel>
         </Border>
 
-        <Grid>
+        <Grid x:Name="MainContentGrid">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="{Binding InaccessiblePaneVisible, Converter={StaticResource PaneWidth}}"
-                                  MinWidth="{Binding InaccessiblePaneVisible, Converter={StaticResource PaneMinWidth}}" />
+                <ColumnDefinition Width="{Binding InaccessiblePaneColumnWidth}"
+                                  MinWidth="{Binding InaccessiblePaneColumnMinWidth}" />
             </Grid.ColumnDefinitions>
             <views:ChartView Grid.Column="0" DataContext="{Binding Chart}" />
 
