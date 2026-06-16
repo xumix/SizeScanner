@@ -113,6 +113,27 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
+    public void Hover_unscoped_drive_without_free_space_excludes_drive_root()
+    {
+        var vm = CreateVm();
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var kernel = root.Items![2].Items![0]; // Windows/kernel.sys
+        vm.Hover(kernel);
+
+        // The chart root (drive root, synthetic entries stripped) is the path
+        // prefix, so the chain/tooltip must start below it at "Windows" and must
+        // not re-include the drive root.
+        var lines = vm.HoverToolTip.Split(System.Environment.NewLine);
+        Assert.Equal(2, lines.Length);
+        Assert.StartsWith("Windows", lines[0]);
+        Assert.Contains("` kernel.sys", lines[1]);
+        Assert.Equal("C:\\Windows\\kernel.sys", vm.HoverPath);
+    }
+
+    [Fact]
     public void Scoping_recomputes_filter_threshold_from_display_root()
     {
         var vm = CreateVm();

@@ -191,8 +191,11 @@ public sealed partial class ChartViewModel : ViewModelBase
 
     private IReadOnlyList<FsItem> AncestorChain(FsItem node)
     {
-        // From the scope/base root down to the hovered node (root-first).
-        var stop = _scopedRoot ?? GetBaseChartRoot();
+        // From the scope/base root down to the hovered node (root-first). Walk via
+        // Parent pointers, which always reference the real scan tree. GetBaseChartRoot()
+        // may return a synthetic-stripped clone whose children still point at _scanRoot,
+        // so stop on the real root to avoid overshooting and including the drive root.
+        var stop = _scopedRoot ?? _scanRoot;
         var chain = new List<FsItem>();
         for (var current = node; current is not null && !ReferenceEquals(current, stop); current = current.Parent)
             chain.Add(current);

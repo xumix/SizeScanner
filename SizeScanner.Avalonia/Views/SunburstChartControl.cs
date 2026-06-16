@@ -2,15 +2,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using SizeScanner.Avalonia.Charting;
 
 namespace SizeScanner.Avalonia.Views;
 
 public sealed class SunburstChartControl : Control
 {
+    private readonly record struct CachedSegment(IImmutableBrush Brush, StreamGeometry Geometry);
+
+    // Geometry + fill brush per segment, rebuilt only when the chart or bounds size change.
+    // HoveredSegment changes on every pointer move, so keeping this out of the per-render path
+    // avoids re-allocating one StreamGeometry + brush per segment on each mouse move.
+    private SunburstChart? _cacheChart;
+    private Size _cacheSize;
+    private CachedSegment[]? _segmentCache;
+    private Dictionary<SunburstSegment, StreamGeometry>? _geometryBySegment;
+
+    private Pen? _segmentBorderPen;
+    private IBrush? _segmentBorderPenBrush;
+    private Pen? _hoverOutlinePen;
+    private IBrush? _hoverOutlinePenBrush;
+
     public static readonly StyledProperty<SunburstChart?> ChartProperty =
         AvaloniaProperty.Register<SunburstChartControl, SunburstChart?>(nameof(Chart));
 
@@ -66,21 +83,62 @@ public sealed class SunburstChartControl : Control
         if (chart is null || chart.RingCount == 0)
             return;
 
-        var segmentBorder = new Pen(SegmentBorderBrush ?? Brushes.Black, 1);
-        var hoverOutline = new Pen(HoverOutlineBrush ?? Brushes.Black, 3);
+        var size = Bounds.Size;
+        var cache = EnsureSegmentCache(chart, size);
+
+        var segmentBorder = GetPen(ref _segmentBorderPen, ref _segmentBorderPenBrush, SegmentBorderBrush, 1);
+        foreach (var cached in cache)
+            context.DrawGeometry(cached.Brush, segmentBorder, cached.Geometry);
 
         var hovered = HoveredSegment;
-        foreach (var segment in chart.Segments)
-        {
-            var geometry = CreateSegmentGeometry(Bounds.Size, segment, chart.RingCount);
-            context.DrawGeometry(new SolidColorBrush(segment.Color), segmentBorder, geometry);
-        }
-
         if (hovered is not null)
         {
-            var geometry = CreateSegmentGeometry(Bounds.Size, hovered, chart.RingCount);
-            context.DrawGeometry(null, hoverOutline, geometry);
+            // The hovered segment is one of chart.Segments (resolved via hit testing), so its
+            // outline reuses the cached fill geometry. Fall back to a fresh build only if the
+            // reference is stale (e.g. cache rebuilt after the hover was set).
+            if (_geometryBySegment is null || !_geometryBySegment.TryGetValue(hovered, out var hoveredGeometry))
+                hoveredGeometry = CreateSegmentGeometry(size, hovered, chart.RingCount);
+
+            var hoverOutline = GetPen(ref _hoverOutlinePen, ref _hoverOutlinePenBrush, HoverOutlineBrush, 3);
+            context.DrawGeometry(null, hoverOutline, hoveredGeometry);
         }
+    }
+
+    private CachedSegment[] EnsureSegmentCache(SunburstChart chart, Size size)
+    {
+        if (_segmentCache is not null && ReferenceEquals(_cacheChart, chart) && _cacheSize == size)
+            return _segmentCache;
+
+        var segments = chart.Segments;
+        var cache = new CachedSegment[segments.Count];
+        var bySegment = new Dictionary<SunburstSegment, StreamGeometry>(
+            segments.Count,
+            ReferenceEqualityComparer.Instance);
+
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            var geometry = CreateSegmentGeometry(size, segment, chart.RingCount);
+            cache[i] = new CachedSegment(new ImmutableSolidColorBrush(segment.Color), geometry);
+            bySegment[segment] = geometry;
+        }
+
+        _segmentCache = cache;
+        _geometryBySegment = bySegment;
+        _cacheChart = chart;
+        _cacheSize = size;
+        return cache;
+    }
+
+    private static Pen GetPen(ref Pen? pen, ref IBrush? penBrush, IBrush? brush, double thickness)
+    {
+        var effective = brush ?? Brushes.Black;
+        if (pen is null || !ReferenceEquals(penBrush, effective))
+        {
+            pen = new Pen(effective, thickness);
+            penBrush = effective;
+        }
+        return pen;
     }
 
     private static StreamGeometry CreateSegmentGeometry(Size bounds, SunburstSegment segment, int ringCount)
