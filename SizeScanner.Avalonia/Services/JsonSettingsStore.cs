@@ -27,7 +27,8 @@ public sealed class JsonSettingsStore : ISettingsStore
         try
         {
             if (!File.Exists(_filePath)) return new UserSettings();
-            return JsonSerializer.Deserialize<UserSettings>(File.ReadAllText(_filePath)) ?? new UserSettings();
+            return JsonSerializer.Deserialize(File.ReadAllText(_filePath), SizeScannerJsonContext.Default.UserSettings)
+                ?? new UserSettings();
         }
         catch
         {
@@ -39,6 +40,6 @@ public sealed class JsonSettingsStore : ISettingsStore
     {
         var dir = Path.GetDirectoryName(_filePath)!;
         Directory.CreateDirectory(dir);
-        File.WriteAllText(_filePath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(_filePath, JsonSerializer.Serialize(settings, SizeScannerJsonContext.Default.UserSettings));
     }
 }

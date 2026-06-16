@@ -119,7 +119,7 @@
                         </Style>
                     </ListBox.Styles>
                     <ListBox.ItemTemplate>
-                        <DataTemplate>
+                        <DataTemplate x:DataType="x:String">
                             <TextBlock Text="{Binding}"
                                        HorizontalAlignment="Stretch"
                                        TextTrimming="CharacterEllipsis"
