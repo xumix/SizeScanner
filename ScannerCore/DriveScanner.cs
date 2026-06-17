@@ -19,7 +19,22 @@ namespace ScannerCore
         private readonly object _progressLock = new();
         private readonly IScanEngine _engine;
 
-        public DriveScanner() : this(new DirectoryWalkEngine()) { }
+        public DriveScanner()
+            : this(new ScanEngineSelector(new IScanEngine[] { new DirectoryWalkEngine() }, DetectElevation())) { }
+
+        private static bool DetectElevation()
+        {
+            try
+            {
+                using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                return new System.Security.Principal.WindowsPrincipal(identity)
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         public DriveScanner(IScanEngine engine) => _engine = engine;
 
