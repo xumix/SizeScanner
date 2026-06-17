@@ -18,6 +18,8 @@ namespace SizeScanner.Avalonia.Charting;
 /// </summary>
 public sealed class SunburstChartBuilder
 {
+    public const int MaxSegments = 20_000;
+
     private static readonly Color FreeSpaceColor = Colors.White;
     private static readonly Color FilteredBandColor = Color.FromRgb(128, 128, 128);
     private static readonly Color InaccessibleColor = Colors.Red;
@@ -135,6 +137,8 @@ public sealed class SunburstChartBuilder
 
         for (var i = 0; i < children.Count; i++)
         {
+            if (_segments.Count >= MaxSegments)
+                break;
             var child = children[i];
             var childDisplayed = DisplayedOf(child);
             if (childDisplayed <= 0)
