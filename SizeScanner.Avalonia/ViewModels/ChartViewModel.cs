@@ -40,6 +40,8 @@ public sealed partial class ChartViewModel : ViewModelBase
     [ObservableProperty] private string _scopeLabel = string.Empty;
     [ObservableProperty] private string _hoverPath = string.Empty;
     [ObservableProperty] private string _hoverToolTip = string.Empty;
+    [ObservableProperty] private bool _isDeleting;
+    [ObservableProperty] private string _deleteStatusText = string.Empty;
 
     public FsItem? ContextTarget { get; private set; }
     public string ContextTargetPath { get; private set; } = string.Empty;
@@ -159,11 +161,59 @@ public sealed partial class ChartViewModel : ViewModelBase
 
     private async Task DeleteCoreAsync(bool permanent, string title, string message)
     {
-        if (ContextTarget is null) return;
+        var target = ContextTarget;
+        var path = ContextTargetPath;
+        if (target is null) return;
+
         if (!await _dialogs.ConfirmAsync(title, message))
             return;
-        if (!_fileSystem.TryDelete(ContextTargetPath, permanent, out var error))
-            await _dialogs.ShowInfoAsync("Delete failed", error ?? "Delete failed.");
+
+        DeleteStatusText = BuildDeleteStatusText(path, permanent);
+        IsDeleting = true;
+
+        DeleteResult result;
+        try
+        {
+            result = await _fileSystem.DeleteAsync(path, permanent);
+        }
+        finally
+        {
+            IsDeleting = false;
+            DeleteStatusText = string.Empty;
+        }
+
+        if (!result.Success)
+        {
+            await _dialogs.ShowInfoAsync("Delete failed", result.Error ?? "Delete failed.");
+            return;
+        }
+
+        RemoveFromTree(target);
+        ClearHover();
+        SetContextTarget(null);
+        UpdateScopeState();
+        RebuildLayout();
+    }
+
+    private static string BuildDeleteStatusText(string path, bool permanent) =>
+        permanent
+            ? "Deleting permanently: " + path
+            : "Moving to Recycle Bin: " + path;
+
+    private void RemoveFromTree(FsItem node)
+    {
+        var parent = node.Parent;
+        if (parent?.Items is null)
+            return;
+
+        if (!parent.Items.Remove(node))
+            return;
+
+        if (ReferenceEquals(parent, _scanRoot))
+            _chartRootWithoutFreeSpace?.Items?.Remove(node);
+
+        for (var ancestor = parent; ancestor is not null; ancestor = ancestor.Parent)
+            ancestor.Size -= node.Size;
     }
 
     private FsItem GetDisplayRoot() => _scopedRoot ?? GetBaseChartRoot();

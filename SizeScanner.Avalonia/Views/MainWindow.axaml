@@ -62,11 +62,11 @@
         <Border DockPanel.Dock="Bottom" Padding="8,4"
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <StackPanel Orientation="Horizontal" Spacing="16">
-                <TextBlock Text="{Binding StatusText}" />
+                <TextBlock Text="{Binding DisplayStatusText}" />
                 <TextBlock Text="{Binding StatusDetails}" TextTrimming="CharacterEllipsis"
                            IsVisible="{Binding IsScanning}" />
                 <TextBlock Text="{Binding Chart.HoverPath}" TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding !IsScanning}" />
+                           IsVisible="{Binding HoverStatusVisible}" />
             </StackPanel>
         </Border>
 

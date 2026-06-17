@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -46,6 +47,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _elevation = elevation;
         _folderPicker = folderPicker;
         Chart = chart;
+        Chart.PropertyChanged += OnChartPropertyChanged;
         _settings = _settingsStore.Load();
 
         for (var i = 0; i <= 8; i++)
@@ -63,10 +65,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty] private int _filterIndex = 4;
     [ObservableProperty] private int _freeSpaceIndex = 1;
-    [ObservableProperty] private bool _isScanning;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HoverStatusVisible))]
+    private bool _isScanning;
+
     [ObservableProperty] private bool _canRescan;
     [ObservableProperty] private double _progressValue;
-    [ObservableProperty] private string _statusText = "Ready";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayStatusText))]
+    private string _statusText = "Ready";
+
     [ObservableProperty] private string _statusDetails = string.Empty;
     [ObservableProperty] private string _inaccessibleTotalSize = Humanize.Size(0);
     [ObservableProperty] private bool _relaunchAsAdminVisible;
@@ -86,6 +95,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public double InaccessiblePaneColumnMinWidth =>
         InaccessiblePaneVisible ? DefaultInaccessiblePaneWidth : 0;
+
+    public string DisplayStatusText => Chart.IsDeleting ? Chart.DeleteStatusText : StatusText;
+
+    public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting;
 
     private static readonly string[] FilterLabels =
     [
@@ -212,6 +225,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     private void SetScanningState(bool scanning) => IsScanning = scanning;
+
+    private void OnChartPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ChartViewModel.IsDeleting) or nameof(ChartViewModel.DeleteStatusText))
+        {
+            OnPropertyChanged(nameof(DisplayStatusText));
+            OnPropertyChanged(nameof(HoverStatusVisible));
+        }
+    }
 
     private void FinishCancelled()
     {

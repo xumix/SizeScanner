@@ -57,7 +57,8 @@ public sealed class MainWindowViewModelTests
     private sealed class NoopFs : IFileSystemActions
     {
         public void ShowInExplorer(string path) { }
-        public bool TryDelete(string path, bool permanent, out string? error) { error = null; return true; }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(true, null));
     }
 
     private sealed class NoopDialogs : IDialogService
@@ -66,10 +67,13 @@ public sealed class MainWindowViewModelTests
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
     }
 
-    private static MainWindowViewModel CreateVm(FsItem root, FakeSettings? settings = null) =>
+    private static MainWindowViewModel CreateVm(
+        FsItem root,
+        FakeSettings? settings = null,
+        ChartViewModel? chart = null) =>
         new(new FakeScan(root), settings ?? new FakeSettings(), new FakeDrives(),
             new FakeElevation(), new FakeFolderPicker(),
-            new ChartViewModel(new NoopFs(), new NoopDialogs()));
+            chart ?? new ChartViewModel(new NoopFs(), new NoopDialogs()));
 
     private static FsItem DriveRoot() =>
         TestTree.Dir("C:\\",
@@ -135,5 +139,21 @@ public sealed class MainWindowViewModelTests
         vm.FilterIndex = 2;
 
         Assert.Equal(2, settings.Saved.FilterIndex);
+    }
+
+    [Fact]
+    public void DisplayStatusText_uses_chart_delete_status_while_deleting()
+    {
+        var chart = new ChartViewModel(new NoopFs(), new NoopDialogs());
+        var vm = CreateVm(DriveRoot(), chart: chart);
+
+        chart.DeleteStatusText = "Moving to Recycle Bin: C:\\page.sys";
+        chart.IsDeleting = true;
+
+        Assert.Equal("Moving to Recycle Bin: C:\\page.sys", vm.DisplayStatusText);
+
+        chart.IsDeleting = false;
+
+        Assert.Equal("Ready", vm.DisplayStatusText);
     }
 }

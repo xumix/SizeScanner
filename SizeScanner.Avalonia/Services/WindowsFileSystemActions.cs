@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Versioning;
+using System.Threading.Tasks;
 using Microsoft.VisualBasic.FileIO;
 using SizeScanner.Avalonia.Abstractions;
 
@@ -18,32 +19,32 @@ public sealed class WindowsFileSystemActions : IFileSystemActions
         Process.Start("explorer.exe", "/select,\"" + path + "\"");
     }
 
-    public bool TryDelete(string path, bool permanent, out string? error)
+    public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+        Task.Run(() => DeleteCore(path, permanent));
+
+    private static DeleteResult DeleteCore(string path, bool permanent)
     {
-        error = null;
         try
         {
             if (File.Exists(path))
             {
                 if (permanent) File.Delete(path);
                 else FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                return true;
+                return new DeleteResult(true, null);
             }
 
             if (Directory.Exists(path))
             {
                 if (permanent) Directory.Delete(path, recursive: true);
                 else FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                return true;
+                return new DeleteResult(true, null);
             }
 
-            error = "Object is already unavailable.";
-            return false;
+            return new DeleteResult(false, "Object is already unavailable.");
         }
         catch (Exception ex)
         {
-            error = ex.Message;
-            return false;
+            return new DeleteResult(false, ex.Message);
         }
     }
 }
