@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Media;
@@ -49,19 +50,28 @@ public sealed class SunburstChartBuilder
             return new SunburstChart([], 0, 0);
 
         ComputeDisplayedSizes(root);
-        var sectorBudget = MaxSegmentsPerSector;
-        var endAngle = AddChildren(
-            root.Items!,
-            level: 0,
-            startAngle: 0d,
-            sweepAngle: 360d,
-            parentColor: null,
-            denominator: total,
-            ref sectorBudget);
+        var endAngle = AddTopLevel(root.Items!, total);
         if (_filteredTotal > 0)
             AddFilteredRootSector(endAngle);
 
-        return new SunburstChart(_segments, _ringCount, total);
+        // _ringCount above is the planned depth used while laying out (collapse/recurse
+        // decisions). The per-sector budget and [Other] aggregation can stop the layout
+        // short of that depth, so the reported ring count reflects the rings actually drawn,
+        // preventing empty outer rings from cramping the visible ones.
+        var drawnRingCount = ComputeDrawnRingCount();
+        if (drawnRingCount == 0)
+            return new SunburstChart([], 0, 0);
+
+        return new SunburstChart(_segments, drawnRingCount, total);
+    }
+
+    private int ComputeDrawnRingCount()
+    {
+        var maxRing = -1;
+        foreach (var segment in _segments)
+            if (segment.RingIndex > maxRing)
+                maxRing = segment.RingIndex;
+        return maxRing + 1;
     }
 
     private int CountRings(FsItem node, int level)
@@ -128,23 +138,17 @@ public sealed class SunburstChartBuilder
     private long DisplayedOf(FsItem item) =>
         _displayedSize.TryGetValue(item, out var value) ? value : 0;
 
-    private double AddChildren(
-        IReadOnlyList<FsItem> children,
-        int level,
-        double startAngle,
-        double sweepAngle,
-        SliceHsb? parentColor,
-        long denominator,
-        ref int sectorBudget)
+    private double AddTopLevel(IReadOnlyList<FsItem> children, long total)
     {
-        var cursor = startAngle;
-        if (denominator <= 0 || sectorBudget <= 0)
+        var cursor = 0d;
+        var sectorBudget = MaxSegmentsPerSector;
+        if (total <= 0 || sectorBudget <= 0)
             return cursor;
 
         var order = Enumerable.Range(0, children.Count)
             .Where(i => DisplayedOf(children[i]) > 0)
             .OrderByDescending(i => DisplayedOf(children[i]))
-            .ThenBy(i => children[i].Name, System.StringComparer.Ordinal)
+            .ThenBy(i => children[i].Name, StringComparer.Ordinal)
             .ToArray();
         var visibleCount = order.Length;
         var rank = 0;
@@ -156,9 +160,9 @@ public sealed class SunburstChartBuilder
 
             var child = children[order[rank]];
             var childDisplayed = DisplayedOf(child);
-            var childSweep = sweepAngle * childDisplayed / denominator;
+            var childSweep = 360d * childDisplayed / total;
 
-            if (IsLayoutCollapsedFile(child, level))
+            if (IsLayoutCollapsedFile(child, level: 0))
             {
                 cursor += childSweep;
                 continue;
@@ -168,72 +172,264 @@ public sealed class SunburstChartBuilder
             if (remainingSiblings > 0 && sectorBudget == 1)
                 break;
 
-            var hsb = parentColor is null
-                ? SliceColorPalette.LevelBaseColor(rank, visibleCount)
-                : SliceColorPalette.ChildShade(parentColor.Value, rank, visibleCount);
+            var hsb = SliceColorPalette.LevelBaseColor(rank, visibleCount);
 
             _segments.Add(new SunburstSegment(
                 child,
-                level,
-                level,
+                0,
+                0,
                 child.Size,
                 cursor,
                 childSweep,
                 SegmentColor(child, hsb.ToColor())));
             sectorBudget--;
 
-            if (ShouldRecurseInto(child, level))
+            if (ShouldRecurseInto(child, level: 0))
             {
-                if (level == 0)
-                {
-                    // Each root sector (top-level directory) gets its own budget covering the
-                    // sector segment plus all of its descendants, so a large sector cannot drain
-                    // the budget and leave sibling root sectors undrawn. The root segment itself
-                    // already consumed one slot, so the subtree gets MaxSegmentsPerSector - 1.
-                    var subtreeBudget = MaxSegmentsPerSector - 1;
-                    AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed, ref subtreeBudget);
-                }
-                else
-                {
-                    AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed, ref sectorBudget);
-                }
+                // Each root sector gets its own budget covering all descendants. The root
+                // segment already consumed one slot, so the subtree gets MaxSegmentsPerSector - 1.
+                var subtreeBudget = MaxSegmentsPerSector - 1;
+                ExpandSector(child, cursor, childSweep, hsb, ref subtreeBudget);
             }
 
             cursor += childSweep;
         }
 
         if (rank < visibleCount && _segments.Count < MaxSegments)
+            cursor = AddOtherSector(children, order, rank, visibleCount, level: 0, cursor, 360d, total, ref sectorBudget);
+
+        return cursor;
+    }
+
+    private readonly record struct PendingParent(
+        FsItem Node,
+        long Denominator,
+        double StartAngle,
+        double Sweep,
+        SliceHsb Color,
+        int ChildRing);
+
+    private sealed class ParentRingState
+    {
+        public double Cursor;
+        public int EmittedCount;
+        public int VisibleCount;
+        public int ChildRank;
+        public readonly HashSet<FsItem> EmittedChildren = new(ReferenceEqualityComparer.Instance);
+        public readonly HashSet<FsItem> ProcessedChildren = new(ReferenceEqualityComparer.Instance);
+    }
+
+    private void ExpandSector(
+        FsItem sectorNode,
+        double startAngle,
+        double sweep,
+        SliceHsb parentColor,
+        ref int budget)
+    {
+        if (budget <= 0 || sectorNode.Items is not { Count: > 0 })
+            return;
+
+        var frontier = new List<PendingParent>
         {
-            long otherSize = 0;
-            long otherDisplayed = 0;
-            for (var i = rank; i < visibleCount; i++)
+            new(sectorNode, DisplayedOf(sectorNode), startAngle, sweep, parentColor, 1)
+        };
+
+        while (frontier.Count > 0 && budget > 0 && _segments.Count < MaxSegments)
+        {
+            var childRing = frontier[0].ChildRing;
+            if (childRing >= _ringCount)
+                break;
+
+            var candidates = new List<(int ParentIndex, FsItem Child)>();
+            for (var p = 0; p < frontier.Count; p++)
             {
-                var child = children[order[i]];
-                otherSize += child.Size;
-                otherDisplayed += DisplayedOf(child);
+                var parent = frontier[p];
+                foreach (var child in parent.Node.Items!)
+                {
+                    if (DisplayedOf(child) > 0)
+                        candidates.Add((p, child));
+                }
             }
 
-            if (otherDisplayed > 0)
+            if (candidates.Count == 0)
+                break;
+
+            candidates.Sort((a, b) =>
             {
-                var otherSweep = sweepAngle * otherDisplayed / denominator;
+                var cmp = DisplayedOf(b.Child).CompareTo(DisplayedOf(a.Child));
+                return cmp != 0
+                    ? cmp
+                    : string.Compare(a.Child.Name, b.Child.Name, StringComparison.Ordinal);
+            });
+
+            var parentStates = new ParentRingState[frontier.Count];
+            for (var p = 0; p < frontier.Count; p++)
+            {
+                var visibleCount = 0;
+                foreach (var child in frontier[p].Node.Items!)
+                {
+                    if (DisplayedOf(child) > 0)
+                        visibleCount++;
+                }
+
+                parentStates[p] = new ParentRingState
+                {
+                    Cursor = frontier[p].StartAngle,
+                    VisibleCount = visibleCount
+                };
+            }
+
+            var nextFrontier = new List<PendingParent>();
+
+            foreach (var (parentIndex, child) in candidates)
+            {
+                if (budget <= 0 || _segments.Count >= MaxSegments)
+                    break;
+
+                var parent = frontier[parentIndex];
+                var state = parentStates[parentIndex];
+                if (state.ProcessedChildren.Contains(child))
+                    continue;
+
+                var childDisplayed = DisplayedOf(child);
+                var childSweep = parent.Sweep * childDisplayed / parent.Denominator;
+
+                if (IsLayoutCollapsedFile(child, childRing))
+                {
+                    state.ProcessedChildren.Add(child);
+                    state.ChildRank++;
+                    state.Cursor += childSweep;
+                    continue;
+                }
+
+                var unprocessedAtParent = CountUnprocessedVisible(parent.Node, state);
+                if (unprocessedAtParent > 1 && budget == 1)
+                    break;
+
+                var hsb = SliceColorPalette.ChildShade(parent.Color, state.ChildRank, state.VisibleCount);
+                state.ChildRank++;
+                state.ProcessedChildren.Add(child);
+
+                _segments.Add(new SunburstSegment(
+                    child,
+                    childRing,
+                    childRing,
+                    child.Size,
+                    state.Cursor,
+                    childSweep,
+                    SegmentColor(child, hsb.ToColor())));
+                state.Cursor += childSweep;
+                state.EmittedCount++;
+                state.EmittedChildren.Add(child);
+                budget--;
+
+                if (ShouldRecurseInto(child, childRing))
+                {
+                    nextFrontier.Add(new PendingParent(
+                        child,
+                        childDisplayed,
+                        state.Cursor - childSweep,
+                        childSweep,
+                        hsb,
+                        childRing + 1));
+                }
+            }
+
+            for (var p = 0; p < frontier.Count; p++)
+            {
+                if (_segments.Count >= MaxSegments)
+                    break;
+
+                var parent = frontier[p];
+                var state = parentStates[p];
+                if (state.EmittedCount < 1)
+                    continue;
+
+                long otherSize = 0;
+                long otherDisplayed = 0;
+                foreach (var child in parent.Node.Items!)
+                {
+                    if (DisplayedOf(child) <= 0 || state.EmittedChildren.Contains(child))
+                        continue;
+
+                    otherSize += child.Size;
+                    otherDisplayed += DisplayedOf(child);
+                }
+
+                if (otherDisplayed <= 0)
+                    continue;
+
+                var otherSweep = parent.Sweep * otherDisplayed / parent.Denominator;
                 var otherNode = new FsItem(ChartDisplayMetadata.OtherName, otherSize, isDir: false);
 
                 _segments.Add(new SunburstSegment(
                     otherNode,
-                    level,
-                    level,
+                    childRing,
+                    childRing,
                     otherSize,
-                    cursor,
+                    state.Cursor,
                     otherSweep,
                     SegmentColor(otherNode, OtherBandColor)));
 
-                if (sectorBudget > 0)
-                    sectorBudget--;
-                cursor += otherSweep;
+                if (budget > 0)
+                    budget--;
+                state.Cursor += otherSweep;
             }
+
+            frontier = nextFrontier;
+        }
+    }
+
+    private int CountUnprocessedVisible(FsItem parent, ParentRingState state)
+    {
+        var count = 0;
+        foreach (var child in parent.Items!)
+        {
+            if (DisplayedOf(child) > 0 && !state.ProcessedChildren.Contains(child))
+                count++;
+        }
+        return count;
+    }
+
+    private double AddOtherSector(
+        IReadOnlyList<FsItem> children,
+        int[] order,
+        int startRank,
+        int visibleCount,
+        int level,
+        double cursor,
+        double sweepAngle,
+        long denominator,
+        ref int sectorBudget)
+    {
+        long otherSize = 0;
+        long otherDisplayed = 0;
+        for (var i = startRank; i < visibleCount; i++)
+        {
+            var child = children[order[i]];
+            otherSize += child.Size;
+            otherDisplayed += DisplayedOf(child);
         }
 
-        return cursor;
+        if (otherDisplayed <= 0)
+            return cursor;
+
+        var otherSweep = sweepAngle * otherDisplayed / denominator;
+        var otherNode = new FsItem(ChartDisplayMetadata.OtherName, otherSize, isDir: false);
+
+        _segments.Add(new SunburstSegment(
+            otherNode,
+            level,
+            level,
+            otherSize,
+            cursor,
+            otherSweep,
+            SegmentColor(otherNode, OtherBandColor)));
+
+        if (sectorBudget > 0)
+            sectorBudget--;
+
+        return cursor + otherSweep;
     }
 
     private void AddFilteredRootSector(double startAngle)

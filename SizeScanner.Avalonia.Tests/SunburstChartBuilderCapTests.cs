@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System.Collections.Generic;
 using System.Linq;
 using ScannerCore;
 using SizeScanner.Avalonia.Charting;
@@ -101,6 +102,40 @@ public sealed class SunburstChartBuilderCapTests
     }
 
     [Fact]
+    public void Build_deep_subtree_does_not_starve_large_siblings()
+    {
+        var system32Subs = new FsItem[105];
+        for (var i = 0; i < system32Subs.Length; i++)
+            system32Subs[i] = TestTree.Dir($"s{i}", TestTree.File($"f{i}", i + 1));
+
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Windows",
+                TestTree.Dir("System32", system32Subs),
+                TestTree.Dir("WinSxS", TestTree.File("w", 5000)),
+                TestTree.Dir("Installer", TestTree.File("i", 4000)),
+                TestTree.Dir("Assembly", TestTree.File("a", 3000))),
+            TestTree.Dir("Program Files", TestTree.File("pf", 100)));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        var windowsSector = chart.Segments.Single(s => s.Node?.Name == "Windows" && s.RingIndex == 0);
+        var windowsSegments = SegmentsInSector(chart, windowsSector);
+
+        Assert.Contains(windowsSegments, s => s.Node?.Name == "System32");
+        Assert.Contains(windowsSegments, s => s.Node?.Name == "WinSxS");
+        Assert.Contains(windowsSegments, s => s.Node?.Name == "Installer");
+        Assert.Contains(windowsSegments, s => s.Node?.Name == "Assembly");
+
+        var ringOneNames = windowsSegments
+            .Where(s => s.RingIndex == 1)
+            .Select(s => s.Node?.Name)
+            .ToArray();
+        Assert.Contains("WinSxS", ringOneNames);
+        Assert.Contains("Installer", ringOneNames);
+        Assert.Contains("Assembly", ringOneNames);
+    }
+
+    [Fact]
     public void Build_caps_each_root_sector_independently_at_per_sector_limit()
     {
         var usersSubs = new FsItem[105];
@@ -131,20 +166,43 @@ public sealed class SunburstChartBuilderCapTests
         Assert.Equal(SunburstChartBuilder.MaxSegmentsPerSector, gamesSectorCount);
     }
 
+    [Fact]
+    public void Build_ring_count_reflects_rings_actually_drawn_under_budget()
+    {
+        // 'big' would nest three levels deep (CountRings predicts ring index 2), but its 150
+        // direct children fill ring 1 and exhaust the per-sector budget, so ring 2 is never drawn.
+        var subs = new FsItem[150];
+        for (var i = 0; i < subs.Length; i++)
+            subs[i] = TestTree.Dir($"sub{i}", TestTree.Dir($"deep{i}", TestTree.File($"f{i}", i + 1)));
+        var root = TestTree.Dir("root", TestTree.Dir("big", subs));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        var maxRingIndex = chart.Segments.Max(s => s.RingIndex);
+        Assert.Equal(1, maxRingIndex);
+        Assert.Equal(2, chart.RingCount);
+        Assert.DoesNotContain(chart.Segments, s => s.RingIndex >= 2);
+    }
+
     private static int CountSectorSegments(SunburstChart chart, string rootName)
     {
         var rootSegment = chart.Segments.Single(s => s.Node?.Name == rootName && s.RingIndex == 0);
+        return SegmentsInSector(chart, rootSegment).Count;
+    }
+
+    private static List<SunburstSegment> SegmentsInSector(SunburstChart chart, SunburstSegment rootSegment)
+    {
         var start = rootSegment.StartAngle;
         var end = start + rootSegment.SweepAngle;
         const double epsilon = 1e-6;
 
-        var count = 0;
+        var result = new List<SunburstSegment>();
         foreach (var segment in chart.Segments)
         {
             var mid = segment.StartAngle + (segment.SweepAngle / 2d);
             if (mid >= start - epsilon && mid < end - epsilon)
-                count++;
+                result.Add(segment);
         }
-        return count;
+        return result;
     }
 }
