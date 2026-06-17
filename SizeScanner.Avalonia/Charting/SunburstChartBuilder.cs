@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia.Media;
 using ScannerCore;
 
@@ -18,10 +19,12 @@ namespace SizeScanner.Avalonia.Charting;
 /// </summary>
 public sealed class SunburstChartBuilder
 {
-    public const int MaxSegments = 20_000;
+    public const int MaxSegments = 100_000;
+    public const int MaxSegmentsPerSector = 100;
 
     private static readonly Color FreeSpaceColor = Colors.White;
     private static readonly Color FilteredBandColor = Color.FromRgb(128, 128, 128);
+    private static readonly Color OtherBandColor = Color.FromRgb(96, 96, 96);
     private static readonly Color InaccessibleColor = Colors.Red;
 
     private long _filterThreshold;
@@ -46,13 +49,15 @@ public sealed class SunburstChartBuilder
             return new SunburstChart([], 0, 0);
 
         ComputeDisplayedSizes(root);
+        var sectorBudget = MaxSegmentsPerSector;
         var endAngle = AddChildren(
             root.Items!,
             level: 0,
             startAngle: 0d,
             sweepAngle: 360d,
             parentColor: null,
-            denominator: total);
+            denominator: total,
+            ref sectorBudget);
         if (_filteredTotal > 0)
             AddFilteredRootSector(endAngle);
 
@@ -129,31 +134,43 @@ public sealed class SunburstChartBuilder
         double startAngle,
         double sweepAngle,
         SliceHsb? parentColor,
-        long denominator)
+        long denominator,
+        ref int sectorBudget)
     {
         var cursor = startAngle;
-        if (denominator <= 0)
+        if (denominator <= 0 || sectorBudget <= 0)
             return cursor;
 
-        for (var i = 0; i < children.Count; i++)
+        var order = Enumerable.Range(0, children.Count)
+            .Where(i => DisplayedOf(children[i]) > 0)
+            .OrderByDescending(i => DisplayedOf(children[i]))
+            .ThenBy(i => children[i].Name, System.StringComparer.Ordinal)
+            .ToArray();
+        var visibleCount = order.Length;
+        var rank = 0;
+
+        for (; rank < visibleCount && sectorBudget > 0; rank++)
         {
             if (_segments.Count >= MaxSegments)
                 break;
-            var child = children[i];
-            var childDisplayed = DisplayedOf(child);
-            if (childDisplayed <= 0)
-                continue;
 
+            var child = children[order[rank]];
+            var childDisplayed = DisplayedOf(child);
             var childSweep = sweepAngle * childDisplayed / denominator;
-            var hsb = parentColor is null
-                ? SliceColorPalette.LevelBaseColor(i, children.Count)
-                : SliceColorPalette.ChildShade(parentColor.Value, i, children.Count);
 
             if (IsLayoutCollapsedFile(child, level))
             {
                 cursor += childSweep;
                 continue;
             }
+
+            var remainingSiblings = visibleCount - rank - 1;
+            if (remainingSiblings > 0 && sectorBudget == 1)
+                break;
+
+            var hsb = parentColor is null
+                ? SliceColorPalette.LevelBaseColor(rank, visibleCount)
+                : SliceColorPalette.ChildShade(parentColor.Value, rank, visibleCount);
 
             _segments.Add(new SunburstSegment(
                 child,
@@ -163,11 +180,57 @@ public sealed class SunburstChartBuilder
                 cursor,
                 childSweep,
                 SegmentColor(child, hsb.ToColor())));
+            sectorBudget--;
 
             if (ShouldRecurseInto(child, level))
-                AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed);
+            {
+                if (level == 0)
+                {
+                    // Each root sector (top-level directory) gets its own budget covering the
+                    // sector segment plus all of its descendants, so a large sector cannot drain
+                    // the budget and leave sibling root sectors undrawn. The root segment itself
+                    // already consumed one slot, so the subtree gets MaxSegmentsPerSector - 1.
+                    var subtreeBudget = MaxSegmentsPerSector - 1;
+                    AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed, ref subtreeBudget);
+                }
+                else
+                {
+                    AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed, ref sectorBudget);
+                }
+            }
 
             cursor += childSweep;
+        }
+
+        if (rank < visibleCount && _segments.Count < MaxSegments)
+        {
+            long otherSize = 0;
+            long otherDisplayed = 0;
+            for (var i = rank; i < visibleCount; i++)
+            {
+                var child = children[order[i]];
+                otherSize += child.Size;
+                otherDisplayed += DisplayedOf(child);
+            }
+
+            if (otherDisplayed > 0)
+            {
+                var otherSweep = sweepAngle * otherDisplayed / denominator;
+                var otherNode = new FsItem(ChartDisplayMetadata.OtherName, otherSize, isDir: false);
+
+                _segments.Add(new SunburstSegment(
+                    otherNode,
+                    level,
+                    level,
+                    otherSize,
+                    cursor,
+                    otherSweep,
+                    SegmentColor(otherNode, OtherBandColor)));
+
+                if (sectorBudget > 0)
+                    sectorBudget--;
+                cursor += otherSweep;
+            }
         }
 
         return cursor;
@@ -209,7 +272,8 @@ public sealed class SunburstChartBuilder
         && item.Name is not (
             DriveScanMetadata.FreeSpaceName
             or DriveScanMetadata.InaccessibleName
-            or ChartDisplayMetadata.FilteredName);
+            or ChartDisplayMetadata.FilteredName
+            or ChartDisplayMetadata.OtherName);
 
     private bool AnyVisibleRealDirectory(IReadOnlyList<FsItem> children)
     {
@@ -228,6 +292,7 @@ public sealed class SunburstChartBuilder
             DriveScanMetadata.FreeSpaceName => FreeSpaceColor,
             DriveScanMetadata.InaccessibleName => InaccessibleColor,
             ChartDisplayMetadata.FilteredName => FilteredBandColor,
+            ChartDisplayMetadata.OtherName => OtherBandColor,
             _ => paletteColor
         };
 

@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System.Linq;
 using ScannerCore;
 using SizeScanner.Avalonia.Charting;
 using Xunit;
@@ -21,6 +22,8 @@ public sealed class SunburstChartBuilderCapTests
 
         Assert.True(chart.Segments.Count <= SunburstChartBuilder.MaxSegments,
             $"segments={chart.Segments.Count}");
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "f49999");
+        Assert.DoesNotContain(chart.Segments, s => s.Node?.Name == "f0");
     }
 
     [Fact]
@@ -33,5 +36,115 @@ public sealed class SunburstChartBuilderCapTests
         var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
 
         Assert.Equal(2, chart.Segments.Count);
+    }
+
+    [Fact]
+    public void Build_aggregates_children_beyond_per_sector_limit_into_other()
+    {
+        var files = new FsItem[105];
+        for (var i = 0; i < files.Length; i++)
+            files[i] = TestTree.File($"f{i}", i + 1);
+        var root = TestTree.Dir("root", files);
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        Assert.Equal(100, chart.Segments.Count);
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "f104");
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "f6");
+        Assert.DoesNotContain(chart.Segments, s => s.Node?.Name == "f5");
+        Assert.DoesNotContain(chart.Segments, s => s.Node?.Name == "f0");
+
+        var other = Assert.Single(chart.Segments, s => s.Node?.Name == ChartDisplayMetadata.OtherName);
+        var expectedOtherSize = Enumerable.Range(1, 6).Sum(i => (long)i);
+        var expectedTotal = Enumerable.Range(1, 105).Sum(i => (long)i);
+        Assert.Equal(expectedOtherSize, other.Size);
+        Assert.Equal(expectedOtherSize / (double)expectedTotal * 360d, other.SweepAngle, 3);
+    }
+
+    [Fact]
+    public void Build_sector_budget_spans_all_ring_levels()
+    {
+        var subs = new FsItem[105];
+        for (var i = 0; i < subs.Length; i++)
+            subs[i] = TestTree.Dir($"sub{i}", TestTree.File($"f{i}", i + 1));
+        var root = TestTree.Dir("root", TestTree.Dir("bigDir", subs));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        Assert.Equal(100, chart.Segments.Count);
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "bigDir");
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "sub104");
+        Assert.Contains(chart.Segments, s => s.Node?.Name == "sub7");
+        Assert.Contains(chart.Segments, s => s.Node?.Name == ChartDisplayMetadata.OtherName);
+        Assert.DoesNotContain(chart.Segments, s => s.Node?.Name == "sub6");
+        Assert.DoesNotContain(chart.Segments, s => s.Node?.Name == "sub0");
+    }
+
+    [Fact]
+    public void Build_root_ring_completes_when_first_child_has_many_descendants()
+    {
+        var subs = new FsItem[105];
+        for (var i = 0; i < subs.Length; i++)
+            subs[i] = TestTree.Dir($"sub{i}", TestTree.File($"f{i}", i + 1));
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users", subs),
+            TestTree.Dir("Games", TestTree.File("game", 50)),
+            TestTree.Dir("Windows", TestTree.File("win", 100)));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        var ringZero = chart.Segments.Where(s => s.RingIndex == 0).ToArray();
+        Assert.Equal(360d, ringZero.Sum(s => s.SweepAngle), 3);
+        Assert.Contains(ringZero, s => s.Node?.Name == "Users");
+        Assert.Contains(ringZero, s => s.Node?.Name == "Games");
+        Assert.Contains(ringZero, s => s.Node?.Name == "Windows");
+    }
+
+    [Fact]
+    public void Build_caps_each_root_sector_independently_at_per_sector_limit()
+    {
+        var usersSubs = new FsItem[105];
+        for (var i = 0; i < usersSubs.Length; i++)
+            usersSubs[i] = TestTree.Dir($"u{i}", TestTree.File($"uf{i}", i + 1));
+        var gamesSubs = new FsItem[105];
+        for (var i = 0; i < gamesSubs.Length; i++)
+            gamesSubs[i] = TestTree.Dir($"g{i}", TestTree.File($"gf{i}", i + 1));
+
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users", usersSubs),
+            TestTree.Dir("Games", gamesSubs));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        // Both root sectors are drawn and the root ring is complete.
+        var ringZero = chart.Segments.Where(s => s.RingIndex == 0).ToArray();
+        Assert.Equal(360d, ringZero.Sum(s => s.SweepAngle), 3);
+        Assert.Contains(ringZero, s => s.Node?.Name == "Users");
+        Assert.Contains(ringZero, s => s.Node?.Name == "Games");
+
+        // Each root sector (its segment plus all descendants) stays at or below the per-sector limit.
+        var usersSectorCount = CountSectorSegments(chart, "Users");
+        var gamesSectorCount = CountSectorSegments(chart, "Games");
+        Assert.True(usersSectorCount <= SunburstChartBuilder.MaxSegmentsPerSector, $"Users sector={usersSectorCount}");
+        Assert.True(gamesSectorCount <= SunburstChartBuilder.MaxSegmentsPerSector, $"Games sector={gamesSectorCount}");
+        Assert.Equal(SunburstChartBuilder.MaxSegmentsPerSector, usersSectorCount);
+        Assert.Equal(SunburstChartBuilder.MaxSegmentsPerSector, gamesSectorCount);
+    }
+
+    private static int CountSectorSegments(SunburstChart chart, string rootName)
+    {
+        var rootSegment = chart.Segments.Single(s => s.Node?.Name == rootName && s.RingIndex == 0);
+        var start = rootSegment.StartAngle;
+        var end = start + rootSegment.SweepAngle;
+        const double epsilon = 1e-6;
+
+        var count = 0;
+        foreach (var segment in chart.Segments)
+        {
+            var mid = segment.StartAngle + (segment.SweepAngle / 2d);
+            if (mid >= start - epsilon && mid < end - epsilon)
+                count++;
+        }
+        return count;
     }
 }
