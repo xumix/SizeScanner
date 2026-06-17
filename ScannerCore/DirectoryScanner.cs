@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -18,18 +20,6 @@ namespace ScannerCore
         private const uint StatusNoMoreFiles = 0x80000006;
 
         #region Native
-
-        [StructLayout(LayoutKind.Explicit, Size = 8)]
-        // ReSharper disable InconsistentNaming
-        internal struct LARGE_INTEGER
-        {
-            [FieldOffset(0)]
-            internal Int64 QuadPart;
-            [FieldOffset(0)]
-            internal Int32 LowPart;
-            [FieldOffset(4)]
-            internal UInt32 HighPart;
-        }
 
         [StructLayout(LayoutKind.Explicit)]
         internal struct IO_STATUS_BLOCK_UNION
@@ -46,26 +36,6 @@ namespace ScannerCore
             internal IO_STATUS_BLOCK_UNION Union;
             internal UIntPtr Information;
         }
-
-        const Int32 FDI_FileName_FieldSize = 2;
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 1)]
-        internal class FILE_DIRECTORY_INFORMATION
-        {
-            internal UInt32 NextEntryOffset;
-            internal UInt32 FileIndex;
-            internal LARGE_INTEGER CreationTime;
-            internal LARGE_INTEGER LastAccessTime;
-            internal LARGE_INTEGER LastWriteTime;
-            internal LARGE_INTEGER ChangeTime;
-            internal LARGE_INTEGER EndOfFile;
-            internal LARGE_INTEGER AllocationSize;
-            internal CreateFileOptions FileAttributes;
-            internal UInt32 FileNameLength;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = FDI_FileName_FieldSize)] internal Byte[] FileName = null!;
-        }
-
-        readonly int FileNameOffset = Marshal.SizeOf<FILE_DIRECTORY_INFORMATION>() - FDI_FileName_FieldSize;
 
         [Flags]
         public enum FileAccessRights : uint
@@ -333,7 +303,7 @@ namespace ScannerCore
 
         #endregion
 
-        private readonly IntPtr buffer = Marshal.AllocHGlobal(1024 * 1024);
+        private const int BufferSize = 1024 * 1024;
         private readonly bool PreferAllocatedSize;
 
         public DirectoryScanner(bool preferAllocatedSize)
@@ -341,9 +311,8 @@ namespace ScannerCore
             PreferAllocatedSize = preferAllocatedSize;
         }
 
-        public List<FsItem>? Scan(string dir, ref long processed)
+        public unsafe List<FsItem>? Scan(string dir, ref long processed)
         {
-
             var hFolder = NativeMethods.CreateFile(dir,
                                                    FileAccessRights.FILE_LIST_DIRECTORY,
                                                    FileShare.ReadWrite | FileShare.Delete,
@@ -352,68 +321,90 @@ namespace ScannerCore
                                                    CreateFileOptions.FILE_FLAG_BACKUP_SEMANTICS,
                                                    IntPtr.Zero);
             if (hFolder.IsInvalid)
-            {
                 return null;
-            }
 
             var res = new List<FsItem>();
-
-            bool moreFiles = true;
-            var statusBlock = new IO_STATUS_BLOCK();
-            while (moreFiles)
+            var rented = ArrayPool<byte>.Shared.Rent(BufferSize);
+            try
             {
-                var ntstatus = NativeMethods.NtQueryDirectoryFile(
-                    hFolder,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    statusBlock,
-                    buffer,
-                    1024*1024,
-                    FileDirectoryInformation,
-                    false,
-                    IntPtr.Zero,
-                    false);
-
-                switch (ntstatus)
+                fixed (byte* bufferPtr = rented)
                 {
-                    case StatusNoMoreFiles:
-                        moreFiles = false;
+                    var statusBlock = new IO_STATUS_BLOCK();
+                    while (true)
+                    {
+                        var ntstatus = NativeMethods.NtQueryDirectoryFile(
+                            hFolder,
+                            IntPtr.Zero,
+                            IntPtr.Zero,
+                            IntPtr.Zero,
+                            statusBlock,
+                            (IntPtr)bufferPtr,
+                            BufferSize,
+                            FileDirectoryInformation,
+                            false,
+                            IntPtr.Zero,
+                            false);
+
+                        if (ntstatus == StatusSuccess)
+                        {
+                            ParseBuffer(bufferPtr, res, ref processed);
+                            continue;
+                        }
+
+                        if (ntstatus != StatusNoMoreFiles)
+                            Debug.WriteLine(new Win32Exception().Message);
                         break;
-                    case StatusSuccess:
-                        CheckData(buffer, res, ref processed);
-                        break;
-                    default:
-                        moreFiles = false;
-                        Debug.WriteLine(new Win32Exception().Message);
-                        break;
+                    }
                 }
             }
-            hFolder.Close();
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+                hFolder.Close();
+            }
 
             return res;
         }
 
-        private void CheckData(IntPtr dataPtr, List<FsItem> items, ref long processed)
+        private unsafe void ParseBuffer(byte* basePtr, List<FsItem> items, ref long processed)
         {
-            FILE_DIRECTORY_INFORMATION info;
-            do
+            const int OffsetNextEntry = 0;
+            const int OffsetEndOfFile = 40;
+            const int OffsetAllocationSize = 48;
+            const int OffsetFileAttributes = 56;
+            const int OffsetFileNameLength = 60;
+            const int OffsetFileName = 64;
+
+            var ptr = basePtr;
+            while (true)
             {
-                info = Marshal.PtrToStructure<FILE_DIRECTORY_INFORMATION>(dataPtr)!;
-                if ((info.FileAttributes & CreateFileOptions.FILE_ATTRIBUTE_REPARSE_POINT) == 0 //not symlink
-                    || (info.FileAttributes & CreateFileOptions.FILE_ATTRIBUTE_OFFLINE) != 0) //or symlink to offline file
+                var nextEntryOffset = Unsafe.ReadUnaligned<uint>(ptr + OffsetNextEntry);
+                var attributes = Unsafe.ReadUnaligned<uint>(ptr + OffsetFileAttributes);
+
+                var isReparse = (attributes & (uint)CreateFileOptions.FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                var isOffline = (attributes & (uint)CreateFileOptions.FILE_ATTRIBUTE_OFFLINE) != 0;
+                if (!isReparse || isOffline)
                 {
-                    var name = Marshal.PtrToStringUni(dataPtr + FileNameOffset, (int) info.FileNameLength/2);
-                    var isDir = (info.FileAttributes & CreateFileOptions.FILE_ATTRIBUTE_DIRECTORY) > 0;
-                    if (!(isDir && ((name.Length == 1 && name[0] == '.') || (name.Length == 2 && name[0] == '.' && name[1] == '.')))) //not "." or ".." pseudo-directories
+                    var nameLengthBytes = Unsafe.ReadUnaligned<uint>(ptr + OffsetFileNameLength);
+                    var name = new string((char*)(ptr + OffsetFileName), 0, (int)(nameLengthBytes / 2));
+                    var isDir = (attributes & (uint)CreateFileOptions.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    var isDotDir = isDir
+                        && ((name.Length == 1 && name[0] == '.')
+                            || (name.Length == 2 && name[0] == '.' && name[1] == '.'));
+                    if (!isDotDir)
                     {
-                        long size = PreferAllocatedSize ? info.AllocationSize.QuadPart : info.EndOfFile.QuadPart;
-                        items.Add(new FsItem(name, size, isDir, info.LastWriteTime.QuadPart));
+                        var size = PreferAllocatedSize
+                            ? Unsafe.ReadUnaligned<long>(ptr + OffsetAllocationSize)
+                            : Unsafe.ReadUnaligned<long>(ptr + OffsetEndOfFile);
+                        items.Add(new FsItem(name, size, isDir));
                         processed += size;
                     }
                 }
-                dataPtr += (int) info.NextEntryOffset;
-            } while (info.NextEntryOffset != 0);
+
+                if (nextEntryOffset == 0)
+                    break;
+                ptr += nextEntryOffset;
+            }
         }
     }
 }
