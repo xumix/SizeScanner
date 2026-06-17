@@ -84,7 +84,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private static readonly string[] FilterLabels =
     [
-        "No threshold (SLOW!)", "0.25% (Slower)", "0.5%", "0.75%", "1%",
+        "No threshold", "0.25%", "0.5%", "0.75%", "1%",
         "1.25%", "1.5%", "1.75% (Rougher)", "2% (ROUGH!)"
     ];
 
