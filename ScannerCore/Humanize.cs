@@ -10,9 +10,9 @@ namespace ScannerCore
     {
         public static string Size(long size)
         {
-            Single output = size;
+            double output = size;
             int sufIdx = 0;
-            while (Math.Abs(output) > 1024)
+            while (Math.Abs(output) > 1024 && sufIdx < Suffixes.Length - 1)
             {
                 sufIdx++;
                 output /= 1024;

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 
 namespace ScannerCore
@@ -12,11 +13,31 @@ namespace ScannerCore
     public class DriveScanner
     {
         private long _total, _occupied;
-        private readonly List<string> _problematic = new List<string>();
-        private DirectoryScanner _scanner = null!;
+        private IReadOnlyList<string> _problematic = Array.Empty<string>();
         private IProgress<ScanProgress>? _progress;
         private Stopwatch? _progressStopwatch;
         private bool _isDriveScan;
+        private readonly object _progressLock = new();
+        private readonly IScanEngine _engine;
+
+        public DriveScanner()
+            : this(new ScanEngineSelector(new IScanEngine[] { new DirectoryWalkEngine() }, DetectElevation())) { }
+
+        private static bool DetectElevation()
+        {
+            try
+            {
+                using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                return new System.Security.Principal.WindowsPrincipal(identity)
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public DriveScanner(IScanEngine engine) => _engine = engine;
 
         public float Progress =>
             _occupied == 0 ? 0 : _total * (float)100 / _occupied;
@@ -34,62 +55,41 @@ namespace ScannerCore
         {
             var drive = new DriveInfo(driveName);
             _occupied = drive.TotalSize - drive.TotalFreeSpace;
-            _isDriveScan = true;
 
-            var root = ScanUnitInternal(driveName, true, cancellationToken, progress);
+            var root = ScanUnitInternal(driveName, isDriveScan: true, cancellationToken, progress);
             var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, drive.TotalFreeSpace, false);
             var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, Math.Max(0, _occupied - _total), false);
-            freeSpace.Parent = root;
-            inaccessible.Parent = root;
-            root.Items!.InsertRange(0, new[] { freeSpace, inaccessible });
+            DriveScanMetadata.PrependSyntheticEntries(root, freeSpace, inaccessible);
             return root;
         }
 
         public FsItem ScanDirectory(string path, CancellationToken cancellationToken, IProgress<ScanProgress>? progress = null) =>
-            ScanUnitInternal(path, false, cancellationToken, progress);
+            ScanUnitInternal(path, isDriveScan: false, cancellationToken, progress);
 
-        private FsItem ScanUnitInternal(string location, bool useAllocationSize, CancellationToken run, IProgress<ScanProgress>? progress)
+        private FsItem ScanUnitInternal(string location, bool isDriveScan, CancellationToken token, IProgress<ScanProgress>? progress)
         {
             _total = 0;
-            _problematic.Clear();
+            _problematic = Array.Empty<string>();
             CurrentTarget = location;
+            CurrentScanned = null;
             _progress = progress;
             _progressStopwatch = null;
-            _isDriveScan = useAllocationSize;
+            _isDriveScan = isDriveScan;
 
-            var root = new FsItem(location, 0, true);
-            _scanner = new DirectoryScanner(useAllocationSize);
-            ScanChildren(root, null, run);
+            var result = _engine.Scan(location, isDriveScan, token, OnEngineProgress);
+            _total = result.Total;
+            _problematic = result.Inaccessible;
             ReportProgress(force: true);
-            return root;
+            return result.Root;
         }
 
-        private void ScanChildren(FsItem item, string? parentPath, CancellationToken run)
+        private void OnEngineProgress(string currentPath, long total)
         {
-            if (run.IsCancellationRequested) return;
-
-            var scanObject = parentPath + item.Name;
-            if (scanObject[scanObject.Length - 1] != Path.DirectorySeparatorChar)
-                scanObject += Path.DirectorySeparatorChar;
-
-            CurrentScanned = scanObject;
-            ReportProgress(force: false);
-            var children = _scanner.Scan(scanObject, ref _total);
-            if (children == null)
+            lock (_progressLock)
             {
-                item.Items = null;
-                _problematic.Add(scanObject);
-                return;
-            }
-
-            item.AttachChildren(children);
-
-            for (var i = item.Items!.Count - 1; i >= 0; i--)
-            {
-                var child = item.Items[i];
-                if (child.IsDir)
-                    ScanChildren(child, scanObject, run);
-                item.Size += child.Size;
+                CurrentScanned = currentPath;
+                _total = total;
+                ReportProgress(force: false);
             }
         }
 

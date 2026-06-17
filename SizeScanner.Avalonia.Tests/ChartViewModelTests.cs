@@ -1,0 +1,312 @@
+// Copyright (C) SizeScanner contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+using System;
+using System.Threading.Tasks;
+using ScannerCore;
+using SizeScanner.Avalonia.Abstractions;
+using SizeScanner.Avalonia.Charting;
+using SizeScanner.Avalonia.ViewModels;
+using Xunit;
+
+namespace SizeScanner.Avalonia.Tests;
+
+public sealed class ChartViewModelTests
+{
+    private sealed class NoopFs : IFileSystemActions
+    {
+        public void ShowInExplorer(string path) { }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(true, null));
+    }
+
+    private sealed class FailingFs : IFileSystemActions
+    {
+        public void ShowInExplorer(string path) { }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(false, "boom"));
+    }
+
+    private sealed class PendingFs : IFileSystemActions
+    {
+        public TaskCompletionSource<string> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DeleteResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ShowInExplorer(string path) { }
+
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent)
+        {
+            Started.TrySetResult(path);
+            return Completion.Task;
+        }
+    }
+
+    private sealed class NoopDialogs : IDialogService
+    {
+        public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
+        public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+    }
+
+    private static ChartViewModel CreateVm() => new(new NoopFs(), new NoopDialogs());
+
+    private static ChartViewModel CreateVm(IFileSystemActions fileSystem) => new(fileSystem, new NoopDialogs());
+
+    private static FsItem SampleDriveRoot() =>
+        TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 0),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+
+    [Fact]
+    public void SetScan_then_Refresh_populates_chart_layout()
+    {
+        var vm = CreateVm();
+        vm.SetScan(SampleDriveRoot(), isDrive: true, targetPath: "C:\\");
+        vm.Refresh(filterPercent: 0f, includeFreeSpace: false);
+
+        Assert.NotEmpty(vm.Layout.Segments);
+        Assert.False(vm.IsScoped);
+    }
+
+    [Fact]
+    public void HideFreeSpace_removes_free_space_but_keeps_inaccessible()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 50),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.FreeSpaceName);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.InaccessibleName);
+    }
+
+    [Fact]
+    public void Scoping_into_directory_updates_scope_state()
+    {
+        var vm = CreateVm();
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var windows = root.Items![2];
+        Assert.True(vm.TryScopeAt(windows));
+        Assert.True(vm.IsScoped);
+        Assert.Contains("Windows", vm.ScopeLabel);
+
+        vm.GoToRootCommand.Execute(null);
+        Assert.False(vm.IsScoped);
+    }
+
+    [Fact]
+    public void SuppressesContextMenu_for_synthetic_root_segments()
+    {
+        var vm = CreateVm();
+        var filtered = new FsItem(ChartDisplayMetadata.FilteredName, 5, isDir: false);
+        var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, 500, isDir: false);
+        var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, 0, isDir: false);
+        var folder = new FsItem("Windows", 100, isDir: true) { Items = [] };
+
+        Assert.True(vm.SuppressesContextMenu(filtered));
+        Assert.True(vm.SuppressesContextMenu(freeSpace));
+        Assert.True(vm.SuppressesContextMenu(inaccessible));
+        Assert.True(vm.SuppressesContextMenu(null));
+        Assert.False(vm.SuppressesContextMenu(folder));
+    }
+
+    [Fact]
+    public void CannotScope_into_free_space_or_files()
+    {
+        var vm = CreateVm();
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: true);
+
+        var freeSpace = root.Items![0];
+        var file = root.Items![3];
+        Assert.False(vm.TryScopeAt(freeSpace));
+        Assert.False(vm.TryScopeAt(file));
+    }
+
+    [Fact]
+    public void Hover_builds_status_path_and_tooltip()
+    {
+        var vm = CreateVm();
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var kernel = root.Items![2].Items![0]; // Windows/kernel.sys
+        vm.Hover(kernel);
+
+        Assert.Contains("kernel.sys", vm.HoverPath);
+        Assert.Contains("Windows", vm.HoverToolTip);
+        Assert.Contains("` kernel.sys", vm.HoverToolTip);
+
+        vm.ClearHover();
+        Assert.Equal(string.Empty, vm.HoverPath);
+        Assert.Equal(string.Empty, vm.HoverToolTip);
+    }
+
+    [Fact]
+    public void Hover_unscoped_drive_without_free_space_excludes_drive_root()
+    {
+        var vm = CreateVm();
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var kernel = root.Items![2].Items![0]; // Windows/kernel.sys
+        vm.Hover(kernel);
+
+        // The chart root (drive root, synthetic entries stripped) is the path
+        // prefix, so the chain/tooltip must start below it at "Windows" and must
+        // not re-include the drive root.
+        var lines = vm.HoverToolTip.Split(System.Environment.NewLine);
+        Assert.Equal(2, lines.Length);
+        Assert.StartsWith("Windows", lines[0]);
+        Assert.Contains("` kernel.sys", lines[1]);
+        Assert.Equal("C:\\Windows\\kernel.sys", vm.HoverPath);
+    }
+
+    [Fact]
+    public void Scoping_recomputes_filter_threshold_from_display_root()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File("huge", 100_000),
+            TestTree.Dir("target",
+                TestTree.File("big", 400),
+                TestTree.File("medium", 100),
+                TestTree.File("tiny", 5)));
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        const float filterPercent = 0.01f;
+        vm.Refresh(filterPercent, includeFreeSpace: false);
+
+        var filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(505, filteredAtRoot.Size);
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "big");
+
+        var target = root.Items![1];
+        Assert.True(vm.TryScopeAt(target));
+
+        filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(5, filteredAtRoot.Size);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "big");
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "medium");
+
+        vm.GoToRootCommand.Execute(null);
+
+        filteredAtRoot = Assert.Single(
+            vm.Layout.Segments,
+            s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
+        Assert.Equal(505, filteredAtRoot.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_success_removes_node_from_chart_and_updates_sizes()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        var users = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(users);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "Users");
+        Assert.DoesNotContain(root.Items!, item => ReferenceEquals(item, users));
+        Assert.Equal(200, root.Size);
+        Assert.Null(vm.ContextTarget);
+        Assert.Equal(string.Empty, vm.ContextTargetPath);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_failure_leaves_chart_unchanged()
+    {
+        var vm = CreateVm(new FailingFs());
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        var users = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(users);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "Users");
+        Assert.Contains(root.Items!, item => ReferenceEquals(item, users));
+        Assert.Equal(500, root.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_top_level_drive_child_updates_hidden_free_space_chart_root()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 0),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+        var windows = root.Items![2];
+
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(windows);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "Windows");
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "page.sys");
+        Assert.DoesNotContain(root.Items!, item => ReferenceEquals(item, windows));
+        Assert.Equal(700, root.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_updates_delete_status_while_operation_is_running()
+    {
+        var fileSystem = new PendingFs();
+        var vm = CreateVm(fileSystem);
+        var root = TestTree.Dir("C:\\",
+            TestTree.File("large.bin", 300));
+        var file = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(file);
+
+        var deleteTask = vm.DeleteCommand.ExecuteAsync(null);
+        await fileSystem.Started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.True(vm.IsDeleting);
+        Assert.Contains("Moving to Recycle Bin", vm.DeleteStatusText);
+        Assert.Contains("large.bin", vm.DeleteStatusText);
+
+        fileSystem.Completion.SetResult(new DeleteResult(true, null));
+        await deleteTask;
+
+        Assert.False(vm.IsDeleting);
+        Assert.Equal(string.Empty, vm.DeleteStatusText);
+    }
+}
