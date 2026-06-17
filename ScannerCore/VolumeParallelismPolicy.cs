@@ -3,7 +3,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -80,10 +79,15 @@ internal static class VolumeParallelismPolicy
         if (driveRoot.Length < 2 || driveRoot[1] != ':')
             return null;
 
-        var drive = DriveInfo.GetDrives().FirstOrDefault(d =>
-            string.Equals(d.Name.TrimEnd('\\'), driveRoot, StringComparison.OrdinalIgnoreCase));
-        if (drive is not { DriveType: DriveType.Fixed })
+        try
+        {
+            if (new DriveInfo(driveRoot).DriveType != DriveType.Fixed)
+                return null;
+        }
+        catch
+        {
             return null;
+        }
 
         return @"\\.\" + driveRoot;
     }

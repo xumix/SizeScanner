@@ -28,96 +28,105 @@ public sealed class DirectoryWalkEngine : IScanEngine
     {
         var ctx = new WalkContext(isDriveScan, token, onProgress);
         var root = new FsItem(target, 0, isDir: true);
-
-        var rootPath = target;
-        if (rootPath[rootPath.Length - 1] != Path.DirectorySeparatorChar)
-            rootPath += Path.DirectorySeparatorChar;
-
-        ctx.ReportProgress(rootPath);
-        long added = 0;
-        var children = ctx.Scanner.Scan(rootPath, ref added);
-        ctx.AddToTotal(added);
-        if (children == null)
-        {
-            root.Items = null;
-            ctx.AddProblematic(rootPath);
-            return new ScanResult { Root = root, Total = ctx.Total, Inaccessible = ctx.SnapshotProblematic() };
-        }
-
-        root.AttachChildren(children);
-
-        var subDirs = new List<FsItem>();
-        foreach (var child in children)
-            if (child.IsDir) subDirs.Add(child);
-
-        if (subDirs.Count > 0 && !token.IsCancellationRequested)
-        {
-            if (_shouldParallelize(target))
-            {
-                var options = new ParallelOptions
-                {
-                    CancellationToken = token,
-                    MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, subDirs.Count))
-                };
-                try
-                {
-                    Parallel.ForEach(subDirs, options,
-                        child => WalkSequential(child, rootPath, ctx));
-                }
-                catch (OperationCanceledException)
-                {
-                    // Cancelled mid-scan; the partial tree is returned and the caller checks the token.
-                }
-            }
-            else
-            {
-                foreach (var child in subDirs)
-                {
-                    if (token.IsCancellationRequested)
-                        break;
-                    WalkSequential(child, rootPath, ctx);
-                }
-            }
-        }
-
-        long size = 0;
-        for (var i = 0; i < children.Count; i++)
-            size += children[i].Size;
-        root.Size = size;
+        var rootPath = EnsureTrailingSeparator(target);
+        WalkDirectory(root, rootPath, ctx, parallelChildren: _shouldParallelize(target));
 
         return new ScanResult { Root = root, Total = ctx.Total, Inaccessible = ctx.SnapshotProblematic() };
     }
 
-    private static void WalkSequential(FsItem item, string? parentPath, WalkContext ctx)
+    private static void WalkDirectory(FsItem item, string path, WalkContext ctx, bool parallelChildren)
     {
         if (ctx.Token.IsCancellationRequested) return;
 
-        var scanObject = parentPath + item.Name;
-        if (scanObject[scanObject.Length - 1] != Path.DirectorySeparatorChar)
-            scanObject += Path.DirectorySeparatorChar;
+        var scanPath = EnsureTrailingSeparator(path);
+        if (!TryScanChildren(item, scanPath, ctx, out var children))
+            return;
 
-        ctx.ReportProgress(scanObject);
+        if (children.Count > 0 && !ctx.Token.IsCancellationRequested)
+        {
+            if (parallelChildren)
+                WalkChildDirectoriesInParallel(children, scanPath, ctx);
+            else
+                WalkChildDirectoriesSequentially(children, scanPath, ctx);
+        }
+
+        item.Size = SumChildSizes(children);
+    }
+
+    private static void WalkChildDirectoriesInParallel(IReadOnlyList<FsItem> children, string parentPath, WalkContext ctx)
+    {
+        var subDirs = GetSubDirectories(children);
+        if (subDirs.Count == 0)
+            return;
+
+        var options = new ParallelOptions
+        {
+            CancellationToken = ctx.Token,
+            MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, subDirs.Count))
+        };
+
+        try
+        {
+            Parallel.ForEach(subDirs, options,
+                child => WalkDirectory(child, Path.Combine(parentPath, child.Name), ctx, parallelChildren: false));
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled mid-scan; the partial tree is returned and the caller checks the token.
+        }
+    }
+
+    private static void WalkChildDirectoriesSequentially(IReadOnlyList<FsItem> children, string parentPath, WalkContext ctx)
+    {
+        foreach (var child in children)
+        {
+            if (ctx.Token.IsCancellationRequested)
+                break;
+            if (child.IsDir)
+                WalkDirectory(child, Path.Combine(parentPath, child.Name), ctx, parallelChildren: false);
+        }
+    }
+
+    private static List<FsItem> GetSubDirectories(IReadOnlyList<FsItem> children)
+    {
+        var subDirs = new List<FsItem>();
+        foreach (var child in children)
+            if (child.IsDir)
+                subDirs.Add(child);
+        return subDirs;
+    }
+
+    private static bool TryScanChildren(FsItem item, string path, WalkContext ctx, out List<FsItem> children)
+    {
+        ctx.ReportProgress(path);
         long added = 0;
-        var children = ctx.Scanner.Scan(scanObject, ref added);
+        var scanned = ctx.Scanner.Scan(path, ref added);
         ctx.AddToTotal(added);
-        if (children == null)
+        if (scanned is null)
         {
             item.Items = null;
-            ctx.AddProblematic(scanObject);
-            return;
+            ctx.AddProblematic(path);
+            children = [];
+            return false;
         }
 
-        item.AttachChildren(children);
+        item.AttachChildren(scanned);
+        children = scanned;
+        return true;
+    }
+
+    private static long SumChildSizes(IReadOnlyList<FsItem> children)
+    {
         long size = 0;
         for (var i = 0; i < children.Count; i++)
-        {
-            var child = children[i];
-            if (child.IsDir)
-                WalkSequential(child, scanObject, ctx);
-            size += child.Size;
-        }
-        item.Size = size;
+            size += children[i].Size;
+        return size;
     }
+
+    private static string EnsureTrailingSeparator(string path) =>
+        path[path.Length - 1] == Path.DirectorySeparatorChar
+            ? path
+            : path + Path.DirectorySeparatorChar;
 
     private sealed class WalkContext
     {

@@ -53,9 +53,7 @@ namespace ScannerCore
             segments.Add(root.Name);
             segments.Reverse();
 
-            path = segments[0];
-            for (int i = 1; i < segments.Count; i++)
-                path = Path.Combine(path, segments[i]);
+            path = Path.Join(segments.ToArray());
             return true;
         }
     }

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScannerCore;
@@ -57,6 +58,11 @@ public sealed partial class ChartViewModel : ViewModelBase
     {
         _filterPercent = filterPercent;
         _includeFreeSpace = includeFreeSpace;
+        RebuildLayout();
+    }
+
+    private void RebuildLayout()
+    {
         if (_scanRoot is null)
         {
             Layout = new SunburstChart([], 0, 0);
@@ -85,24 +91,14 @@ public sealed partial class ChartViewModel : ViewModelBase
         HoverToolTip = string.Empty;
     }
 
-    public bool CanScopeTo(FsItem? item)
-    {
-        if (item is null || !item.IsDir) return false;
-        if (item.Items is null || item.Items.Count == 0) return false;
-        if (item.Name == DriveScanMetadata.FreeSpaceName
-            || item.Name == DriveScanMetadata.InaccessibleName
-            || item.Name == ChartDisplayMetadata.FilteredName
-            || item.Name == ChartDisplayMetadata.OtherName)
-            return false;
-        return true;
-    }
+    public bool CanScopeTo(FsItem? item) => ChartNodeRules.IsScopable(item);
 
     public bool TryScopeAt(FsItem node)
     {
         if (!CanScopeTo(node)) return false;
         _scopedRoot = node;
         UpdateScopeState();
-        Refresh(_filterPercent, _includeFreeSpace);
+        RebuildLayout();
         return true;
     }
 
@@ -114,7 +110,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         var parent = _scopedRoot.Parent;
         _scopedRoot = parent is null || ReferenceEquals(parent, _scanRoot) ? null : parent;
         UpdateScopeState();
-        Refresh(_filterPercent, _includeFreeSpace);
+        RebuildLayout();
     }
 
     [RelayCommand]
@@ -123,7 +119,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         if (_scopedRoot is null) return;
         _scopedRoot = null;
         UpdateScopeState();
-        Refresh(_filterPercent, _includeFreeSpace);
+        RebuildLayout();
     }
 
     public void SetContextTarget(FsItem? node)
@@ -132,18 +128,13 @@ public sealed partial class ChartViewModel : ViewModelBase
         ContextTargetPath = node is null ? string.Empty : BuildFullPath(AncestorChain(node));
     }
 
-    public bool IsFreeSpace(FsItem? node) => node?.Name == DriveScanMetadata.FreeSpaceName;
+    public bool IsFreeSpace(FsItem? node) => ChartNodeRules.IsFreeSpace(node);
 
-    public bool IsFiltered(FsItem? node) => node?.Name == ChartDisplayMetadata.FilteredName;
+    public bool IsFiltered(FsItem? node) => ChartNodeRules.IsFiltered(node);
 
-    public bool IsInaccessible(FsItem? node) => node?.Name == DriveScanMetadata.InaccessibleName;
+    public bool IsInaccessible(FsItem? node) => ChartNodeRules.IsInaccessible(node);
 
-    public bool SuppressesContextMenu(FsItem? node) =>
-        node is null
-        || IsFreeSpace(node)
-        || IsFiltered(node)
-        || node.Name == ChartDisplayMetadata.OtherName
-        || IsInaccessible(node);
+    public bool SuppressesContextMenu(FsItem? node) => ChartNodeRules.SuppressesContextMenu(node);
 
     [RelayCommand]
     private void OpenInExplorer()
@@ -153,23 +144,25 @@ public sealed partial class ChartViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async System.Threading.Tasks.Task DeleteAsync()
-    {
-        if (ContextTarget is null) return;
-        if (!await _dialogs.ConfirmAsync("Move to Recycle Bin", "Move to Recycle Bin?\n\n" + ContextTargetPath))
-            return;
-        if (!_fileSystem.TryDelete(ContextTargetPath, permanent: false, out var error))
-            await _dialogs.ShowInfoAsync("Delete failed", error ?? "Delete failed.");
-    }
+    private Task DeleteAsync() =>
+        DeleteCoreAsync(
+            permanent: false,
+            title: "Move to Recycle Bin",
+            message: "Move to Recycle Bin?\n\n" + ContextTargetPath);
 
     [RelayCommand]
-    private async System.Threading.Tasks.Task DeletePermanentlyAsync()
+    private Task DeletePermanentlyAsync() =>
+        DeleteCoreAsync(
+            permanent: true,
+            title: "Permanently delete",
+            message: "Are you sure you want to permanently delete " + ContextTargetPath + "? This cannot be undone.");
+
+    private async Task DeleteCoreAsync(bool permanent, string title, string message)
     {
         if (ContextTarget is null) return;
-        var prompt = "Are you sure you want to permanently delete " + ContextTargetPath + "? This cannot be undone.";
-        if (!await _dialogs.ConfirmAsync("Permanently delete", prompt))
+        if (!await _dialogs.ConfirmAsync(title, message))
             return;
-        if (!_fileSystem.TryDelete(ContextTargetPath, permanent: true, out var error))
+        if (!_fileSystem.TryDelete(ContextTargetPath, permanent, out var error))
             await _dialogs.ShowInfoAsync("Delete failed", error ?? "Delete failed.");
     }
 

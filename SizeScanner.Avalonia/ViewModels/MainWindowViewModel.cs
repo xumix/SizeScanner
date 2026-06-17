@@ -11,6 +11,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
+using SizeScanner.Avalonia.Charting;
 using SizeScanner.Avalonia.Models;
 
 namespace SizeScanner.Avalonia.ViewModels;
@@ -24,6 +25,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly IDriveProvider _driveProvider;
     private readonly IElevationService _elevation;
     private readonly IFolderPicker _folderPicker;
+    private readonly UserSettings _settings;
 
     private FsItem? _scanRoot;
     private CancellationTokenSource? _scanCts;
@@ -44,17 +46,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _elevation = elevation;
         _folderPicker = folderPicker;
         Chart = chart;
+        _settings = _settingsStore.Load();
 
         for (var i = 0; i <= 8; i++)
-            FilterOptions.Add(new FilterOption(FilterLabels[i]));
+            FilterOptions.Add(FilterLabels[i]);
     }
 
     public ChartViewModel Chart { get; }
 
     public ObservableCollection<DriveItem> Drives { get; } = [];
     public ObservableCollection<string> FreeSpaceOptions { get; } = ["Show free space", "Hide free space"];
-    public ObservableCollection<FilterOption> FilterOptions { get; } = [];
+    public ObservableCollection<string> FilterOptions { get; } = [];
     public ObservableCollection<string> InaccessiblePaths { get; } = [];
+    public int InitialWindowWidth => _settings.WindowWidth;
+    public int InitialWindowHeight => _settings.WindowHeight;
 
     [ObservableProperty] private int _filterIndex = 4;
     [ObservableProperty] private int _freeSpaceIndex = 1;
@@ -96,13 +101,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         foreach (var drive in _driveProvider.GetReadyDrives())
             Drives.Add(drive);
 
-        var settings = _settingsStore.Load();
         _suppressOptionChanges = true;
-        FreeSpaceIndex = settings.FreeSpaceIndex;
-        FilterIndex = settings.FilterIndex;
-        InaccessiblePaneCollapsed = settings.InaccessiblePaneCollapsed;
-        InaccessiblePaneWidth = settings.SplitterDistance > 0
-            ? settings.SplitterDistance
+        FreeSpaceIndex = _settings.FreeSpaceIndex;
+        FilterIndex = _settings.FilterIndex;
+        InaccessiblePaneCollapsed = _settings.InaccessiblePaneCollapsed;
+        InaccessiblePaneWidth = _settings.SplitterDistance > 0
+            ? _settings.SplitterDistance
             : DefaultInaccessiblePaneWidth;
         _suppressOptionChanges = false;
     }
@@ -222,7 +226,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private void RefreshChart()
     {
         if (_scanRoot is null) return;
-        var percent = 0.0025f * FilterIndex;
+        var percent = FilterThreshold.PercentFromIndex(FilterIndex);
         var includeFreeSpace = FreeSpaceIndex == 0;
         Chart.Refresh(percent, includeFreeSpace);
     }
@@ -237,25 +241,25 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         Persist();
     }
 
-    public UserSettings CaptureSettings(int windowWidth, int windowHeight, int splitterDistance) => new()
+    public UserSettings CaptureSettings(int windowWidth, int windowHeight, int splitterDistance)
     {
-        FilterIndex = FilterIndex,
-        FreeSpaceIndex = FreeSpaceIndex,
-        WindowWidth = windowWidth,
-        WindowHeight = windowHeight,
-        SplitterDistance = splitterDistance,
-        InaccessiblePaneCollapsed = InaccessiblePaneCollapsed
-    };
+        _settings.FilterIndex = FilterIndex;
+        _settings.FreeSpaceIndex = FreeSpaceIndex;
+        _settings.WindowWidth = windowWidth;
+        _settings.WindowHeight = windowHeight;
+        _settings.SplitterDistance = splitterDistance;
+        _settings.InaccessiblePaneCollapsed = InaccessiblePaneCollapsed;
+        return _settings;
+    }
 
     public void SaveOnClose(int windowWidth, int windowHeight, int splitterDistance) =>
         _settingsStore.Save(CaptureSettings(windowWidth, windowHeight, splitterDistance));
 
     private void Persist()
     {
-        var s = _settingsStore.Load();
-        s.FilterIndex = FilterIndex;
-        s.FreeSpaceIndex = FreeSpaceIndex;
-        s.InaccessiblePaneCollapsed = InaccessiblePaneCollapsed;
-        _settingsStore.Save(s);
+        _settings.FilterIndex = FilterIndex;
+        _settings.FreeSpaceIndex = FreeSpaceIndex;
+        _settings.InaccessiblePaneCollapsed = InaccessiblePaneCollapsed;
+        _settingsStore.Save(_settings);
     }
 }

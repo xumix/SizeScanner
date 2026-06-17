@@ -18,9 +18,6 @@ public sealed record SunburstSegment(
     public double EndAngle => StartAngle + SweepAngle;
     public bool IsActionable => Node is not null;
 
-    public string DisplayText =>
-        $"{Node?.Name ?? "<no name>"} Size: ({Humanize.Size(Size)})";
-
     public override string ToString() =>
         $"{Node?.Name ?? "<no name>"} Size: ({Humanize.Size(Size)})";
 }

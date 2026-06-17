@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 
 namespace ScannerCore
@@ -41,15 +42,7 @@ namespace ScannerCore
         public float Progress =>
             _occupied == 0 ? 0 : _total * (float)100 / _occupied;
 
-        public string[] Inaccessible
-        {
-            get
-            {
-                var array = new string[_problematic.Count];
-                for (var i = 0; i < _problematic.Count; i++) array[i] = _problematic[i];
-                return array;
-            }
-        }
+        public string[] Inaccessible => _problematic.ToArray();
 
         public string? CurrentTarget { get; private set; }
 
@@ -66,9 +59,7 @@ namespace ScannerCore
             var root = ScanUnitInternal(driveName, isDriveScan: true, cancellationToken, progress);
             var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, drive.TotalFreeSpace, false);
             var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, Math.Max(0, _occupied - _total), false);
-            freeSpace.Parent = root;
-            inaccessible.Parent = root;
-            root.Items!.InsertRange(0, new[] { freeSpace, inaccessible });
+            DriveScanMetadata.PrependSyntheticEntries(root, freeSpace, inaccessible);
             return root;
         }
 

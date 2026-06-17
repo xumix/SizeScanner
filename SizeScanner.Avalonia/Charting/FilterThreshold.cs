@@ -8,6 +8,11 @@ namespace SizeScanner.Avalonia.Charting;
 
 public static class FilterThreshold
 {
+    private const float PercentPerIndexStep = 0.0025f;
+
+    public static float PercentFromIndex(int filterIndex) =>
+        PercentPerIndexStep * filterIndex;
+
     public static long Compute(float percent, FsItem displayRoot) =>
         (long)(percent * GetDisplayTotal(displayRoot));
 

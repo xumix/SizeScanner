@@ -83,7 +83,7 @@ public sealed class SunburstChartBuilder
         {
             if (!IsVisibleChild(child))
                 continue;
-            if (!IsRealDirectory(child) || child.Items is not { Count: > 0 })
+            if (!ChartNodeRules.IsRealDirectory(child) || child.Items is not { Count: > 0 })
                 continue;
             if (AnyVisibleRealDirectory(child.Items))
                 max = System.Math.Max(max, CountRings(child, level + 1));
@@ -99,7 +99,7 @@ public sealed class SunburstChartBuilder
             long filteredChildrenSize = 0;
             foreach (var child in node.Items)
             {
-                if (IsAlwaysVisibleRootEntry(child))
+                if (ChartNodeRules.IsAlwaysVisibleDriveEntry(child))
                 {
                     var size = System.Math.Max(0, child.Size);
                     _displayedSize[child] = size;
@@ -348,36 +348,25 @@ public sealed class SunburstChartBuilder
     private bool IsLayoutCollapsedFile(FsItem child, int level) =>
         _ringCount > 1
         && level == _ringCount - 1
-        && !IsRealDirectory(child)
-        && !IsAlwaysVisibleRootEntry(child);
+        && !ChartNodeRules.IsRealDirectory(child)
+        && !ChartNodeRules.IsAlwaysVisibleDriveEntry(child);
 
     private bool ShouldRecurseInto(FsItem child, int level) =>
         child.Items is { Count: > 0 }
-        && IsRealDirectory(child)
+        && ChartNodeRules.IsRealDirectory(child)
         && level + 1 < _ringCount
         && (level + 2 < _ringCount || AnyVisibleRealDirectory(child.Items));
 
     private bool IsVisibleChild(FsItem child) =>
-        child.Size > _filterThreshold || IsAlwaysVisibleRootEntry(child);
-
-    private static bool IsRealDirectory(FsItem item) =>
-        item.IsDir
-        && item.Name is not (
-            DriveScanMetadata.FreeSpaceName
-            or DriveScanMetadata.InaccessibleName
-            or ChartDisplayMetadata.FilteredName
-            or ChartDisplayMetadata.OtherName);
+        child.Size > _filterThreshold || ChartNodeRules.IsAlwaysVisibleDriveEntry(child);
 
     private bool AnyVisibleRealDirectory(IReadOnlyList<FsItem> children)
     {
         foreach (var child in children)
-            if (IsVisibleChild(child) && IsRealDirectory(child))
+            if (IsVisibleChild(child) && ChartNodeRules.IsRealDirectory(child))
                 return true;
         return false;
     }
-
-    private static bool IsAlwaysVisibleRootEntry(FsItem item) =>
-        item.Name is DriveScanMetadata.FreeSpaceName or DriveScanMetadata.InaccessibleName;
 
     private static Color SegmentColor(FsItem item, Color paletteColor) =>
         item.Name switch

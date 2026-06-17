@@ -50,13 +50,7 @@
                 <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="8,0,0,0" />
                 <ComboBox ItemsSource="{Binding FilterOptions}"
                           SelectedIndex="{Binding FilterIndex}"
-                          IsEnabled="{Binding !IsScanning}">
-                    <ComboBox.ItemTemplate>
-                        <DataTemplate x:DataType="models:FilterOption">
-                            <TextBlock Text="{Binding Label}" />
-                        </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                </ComboBox>
+                          IsEnabled="{Binding !IsScanning}" />
                 <Separator Height="NaN" Width="1" />
                 <Button Content="Toggle Inaccessible" Command="{Binding ToggleInaccessiblePaneCommand}"
                         IsEnabled="{Binding !IsScanning}" />
