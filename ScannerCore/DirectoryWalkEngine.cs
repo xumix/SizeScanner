@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace ScannerCore;
 
@@ -20,13 +21,52 @@ public sealed class DirectoryWalkEngine : IScanEngine
     {
         var ctx = new WalkContext(isDriveScan, token, onProgress);
         var root = new FsItem(target, 0, isDir: true);
-        WalkSequential(root, null, ctx);
-        return new ScanResult
+
+        var rootPath = target;
+        if (rootPath[rootPath.Length - 1] != Path.DirectorySeparatorChar)
+            rootPath += Path.DirectorySeparatorChar;
+
+        ctx.ReportProgress(rootPath);
+        long added = 0;
+        var children = ctx.Scanner.Scan(rootPath, ref added);
+        ctx.AddToTotal(added);
+        if (children == null)
         {
-            Root = root,
-            Total = ctx.Total,
-            Inaccessible = ctx.SnapshotProblematic()
-        };
+            root.Items = null;
+            ctx.AddProblematic(rootPath);
+            return new ScanResult { Root = root, Total = ctx.Total, Inaccessible = ctx.SnapshotProblematic() };
+        }
+
+        root.AttachChildren(children);
+
+        var subDirs = new List<FsItem>();
+        foreach (var child in children)
+            if (child.IsDir) subDirs.Add(child);
+
+        if (subDirs.Count > 0 && !token.IsCancellationRequested)
+        {
+            var options = new ParallelOptions
+            {
+                CancellationToken = token,
+                MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, subDirs.Count))
+            };
+            try
+            {
+                Parallel.ForEach(subDirs, options,
+                    child => WalkSequential(child, rootPath, ctx));
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelled mid-scan; the partial tree is returned and the caller checks the token.
+            }
+        }
+
+        long size = 0;
+        for (var i = 0; i < children.Count; i++)
+            size += children[i].Size;
+        root.Size = size;
+
+        return new ScanResult { Root = root, Total = ctx.Total, Inaccessible = ctx.SnapshotProblematic() };
     }
 
     private static void WalkSequential(FsItem item, string? parentPath, WalkContext ctx)
