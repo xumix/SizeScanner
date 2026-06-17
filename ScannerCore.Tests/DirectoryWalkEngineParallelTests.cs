@@ -33,6 +33,26 @@ public sealed class DirectoryWalkEngineParallelTests
     }
 
     [Fact]
+    public void Spinning_disk_policy_uses_sequential_walk_with_correct_totals()
+    {
+        using var temp = new TemporaryDirectory();
+        long expected = 0;
+        for (var d = 0; d < 12; d++)
+            for (var f = 0; f < 10; f++)
+            {
+                var size = d * 10 + f + 1;
+                temp.CreateFile($"dir{d}/file{f}.dat", size);
+                expected += size;
+            }
+
+        var engine = new DirectoryWalkEngine(_ => false);
+        var result = engine.Scan(temp.Path, isDriveScan: false, CancellationToken.None, null);
+
+        Assert.Equal(expected, result.Root.Size);
+        Assert.Equal(expected, result.Total);
+    }
+
+    [Fact]
     public void Cancellation_stops_the_walk()
     {
         using var temp = new TemporaryDirectory();

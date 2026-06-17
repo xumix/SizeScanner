@@ -11,10 +11,17 @@ namespace ScannerCore;
 
 /// <summary>
 /// Non-admin scan engine: enumerates directories via <see cref="DirectoryScanner"/>
-/// (NtQueryDirectoryFile). Always available. Parallelism is added in a later task.
+/// (NtQueryDirectoryFile). Always available. Top-level subtrees walk in parallel on
+/// SSD-class volumes only; spinning disks stay sequential.
 /// </summary>
 public sealed class DirectoryWalkEngine : IScanEngine
 {
+    private readonly Func<string, bool> _shouldParallelize;
+
+    public DirectoryWalkEngine() : this(VolumeParallelismPolicy.ShouldParallelize) { }
+
+    internal DirectoryWalkEngine(Func<string, bool> shouldParallelize) =>
+        _shouldParallelize = shouldParallelize;
     public bool CanHandle(string target, bool isDriveScan, bool isElevated) => true;
 
     public ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress)
@@ -45,19 +52,31 @@ public sealed class DirectoryWalkEngine : IScanEngine
 
         if (subDirs.Count > 0 && !token.IsCancellationRequested)
         {
-            var options = new ParallelOptions
+            if (_shouldParallelize(target))
             {
-                CancellationToken = token,
-                MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, subDirs.Count))
-            };
-            try
-            {
-                Parallel.ForEach(subDirs, options,
-                    child => WalkSequential(child, rootPath, ctx));
+                var options = new ParallelOptions
+                {
+                    CancellationToken = token,
+                    MaxDegreeOfParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, subDirs.Count))
+                };
+                try
+                {
+                    Parallel.ForEach(subDirs, options,
+                        child => WalkSequential(child, rootPath, ctx));
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cancelled mid-scan; the partial tree is returned and the caller checks the token.
+                }
             }
-            catch (OperationCanceledException)
+            else
             {
-                // Cancelled mid-scan; the partial tree is returned and the caller checks the token.
+                foreach (var child in subDirs)
+                {
+                    if (token.IsCancellationRequested)
+                        break;
+                    WalkSequential(child, rootPath, ctx);
+                }
             }
         }
 
