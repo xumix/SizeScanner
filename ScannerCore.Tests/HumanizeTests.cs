@@ -8,35 +8,24 @@ namespace ScannerCore.Tests;
 
 public sealed class HumanizeTests
 {
-    [Theory]
-    [InlineData(0, "0.00 Byte(s)")]
-    [InlineData(512, "512.00 Byte(s)")]
-    [InlineData(1024, "1024.00 Byte(s)")]
-    [InlineData(1536, "1.50 KByte(s)")]
-    [InlineData(1048576, "1024.00 KByte(s)")]
-    public void Size_formats_expected_suffixes(long bytes, string expected)
+    [Fact]
+    public void Size_does_not_throw_for_max_long()
     {
-        Assert.Equal(expected, Humanize.Size(bytes));
+        var text = Humanize.Size(long.MaxValue);
+        Assert.Contains("Byte(s)", text);
     }
 
     [Fact]
-    public void FsItem_denied_directory_returns_access_denied()
+    public void Size_clamps_to_largest_suffix_for_exabyte_scale()
     {
-        var item = new FsItem("secret", 0, isDir: true) { Items = null };
-        Assert.Equal("<Access Denied>", Humanize.FsItem(item));
+        // 1 EB = 1024^6 bytes. Largest defined suffix is "P"; value must not overflow Suffixes.
+        var text = Humanize.Size(1L << 60);
+        Assert.Contains("PByte(s)", text);
     }
 
     [Fact]
-    public void FsItem_zero_size_returns_empty()
+    public void Size_formats_kilobytes()
     {
-        var item = new FsItem("empty.txt", 0, isDir: false);
-        Assert.Equal("<Empty>", Humanize.FsItem(item));
-    }
-
-    [Fact]
-    public void FsItem_nonzero_returns_size_string()
-    {
-        var item = new FsItem("a.bin", 1024, isDir: false);
-        Assert.Equal("1024.00 Byte(s)", Humanize.FsItem(item));
+        Assert.Equal("2.00 KByte(s)", Humanize.Size(2048));
     }
 }

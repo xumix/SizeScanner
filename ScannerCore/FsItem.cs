@@ -1,7 +1,6 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -9,23 +8,18 @@ using System.IO;
 namespace ScannerCore
 {
     [DebuggerDisplay("Dir:{IsDir}, {Name}, {Size} bytes")]
-    public class FsItem
+    public sealed class FsItem
     {
-        public FsItem(string name, long size, bool isDir, long lastModified) : this(name, size, isDir, DateTime.FromFileTime(lastModified)) { }
-
-        public FsItem(string name, long size, bool isDir, DateTime lastModified = default)
+        public FsItem(string name, long size, bool isDir)
         {
             Name = name;
             Size = size;
             IsDir = isDir;
-            if (lastModified == default) lastModified = DateTime.Now;
-            LastModified = lastModified;
         }
 
         public string Name { get; }
         public long Size { get; set; }
-        public bool IsDir { get; private set; }
-        public DateTime LastModified { get; private set; }
+        public bool IsDir { get; }
         public FsItem? Parent { get; internal set; }
 
         public List<FsItem>? Items { get; set; }
@@ -59,9 +53,7 @@ namespace ScannerCore
             segments.Add(root.Name);
             segments.Reverse();
 
-            path = segments[0];
-            for (int i = 1; i < segments.Count; i++)
-                path = Path.Combine(path, segments[i]);
+            path = Path.Join(segments.ToArray());
             return true;
         }
     }

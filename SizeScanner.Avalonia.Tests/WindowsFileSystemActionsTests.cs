@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System.IO;
+using System.Threading.Tasks;
 using SizeScanner.Avalonia.Services;
 using Xunit;
 
@@ -10,28 +11,28 @@ namespace SizeScanner.Avalonia.Tests;
 public sealed class WindowsFileSystemActionsTests
 {
     [Fact]
-    public void TryDelete_permanent_removes_file_and_reports_success()
+    public async Task DeleteAsync_permanent_removes_file_and_reports_success()
     {
         using var dir = new TempDir();
         var file = dir.CreateFile("doomed.bin", 16);
         var actions = new WindowsFileSystemActions();
 
-        var ok = actions.TryDelete(file, permanent: true, out var error);
+        var result = await actions.DeleteAsync(file, permanent: true);
 
-        Assert.True(ok);
-        Assert.Null(error);
+        Assert.True(result.Success);
+        Assert.Null(result.Error);
         Assert.False(File.Exists(file));
     }
 
     [Fact]
-    public void TryDelete_missing_path_reports_failure()
+    public async Task DeleteAsync_missing_path_reports_failure()
     {
         using var dir = new TempDir();
         var actions = new WindowsFileSystemActions();
 
-        var ok = actions.TryDelete(Path.Combine(dir.Path, "nope.bin"), permanent: true, out var error);
+        var result = await actions.DeleteAsync(Path.Combine(dir.Path, "nope.bin"), permanent: true);
 
-        Assert.False(ok);
-        Assert.NotNull(error);
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
     }
 }

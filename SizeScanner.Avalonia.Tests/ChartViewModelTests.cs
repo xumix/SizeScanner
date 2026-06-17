@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -15,7 +16,29 @@ public sealed class ChartViewModelTests
     private sealed class NoopFs : IFileSystemActions
     {
         public void ShowInExplorer(string path) { }
-        public bool TryDelete(string path, bool permanent, out string? error) { error = null; return true; }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(true, null));
+    }
+
+    private sealed class FailingFs : IFileSystemActions
+    {
+        public void ShowInExplorer(string path) { }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(false, "boom"));
+    }
+
+    private sealed class PendingFs : IFileSystemActions
+    {
+        public TaskCompletionSource<string> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DeleteResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ShowInExplorer(string path) { }
+
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent)
+        {
+            Started.TrySetResult(path);
+            return Completion.Task;
+        }
     }
 
     private sealed class NoopDialogs : IDialogService
@@ -25,6 +48,8 @@ public sealed class ChartViewModelTests
     }
 
     private static ChartViewModel CreateVm() => new(new NoopFs(), new NoopDialogs());
+
+    private static ChartViewModel CreateVm(IFileSystemActions fileSystem) => new(fileSystem, new NoopDialogs());
 
     private static FsItem SampleDriveRoot() =>
         TestTree.Dir("C:\\",
@@ -43,6 +68,24 @@ public sealed class ChartViewModelTests
 
         Assert.NotEmpty(vm.Layout.Segments);
         Assert.False(vm.IsScoped);
+    }
+
+    [Fact]
+    public void HideFreeSpace_removes_free_space_but_keeps_inaccessible()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 50),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.FreeSpaceName);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.InaccessibleName);
     }
 
     [Fact]
@@ -170,5 +213,100 @@ public sealed class ChartViewModelTests
             vm.Layout.Segments,
             s => s.Node?.Name == ChartDisplayMetadata.FilteredName);
         Assert.Equal(505, filteredAtRoot.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_success_removes_node_from_chart_and_updates_sizes()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        var users = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(users);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "Users");
+        Assert.DoesNotContain(root.Items!, item => ReferenceEquals(item, users));
+        Assert.Equal(200, root.Size);
+        Assert.Null(vm.ContextTarget);
+        Assert.Equal(string.Empty, vm.ContextTargetPath);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_failure_leaves_chart_unchanged()
+    {
+        var vm = CreateVm(new FailingFs());
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        var users = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(users);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "Users");
+        Assert.Contains(root.Items!, item => ReferenceEquals(item, users));
+        Assert.Equal(500, root.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_top_level_drive_child_updates_hidden_free_space_chart_root()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 0),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+        var windows = root.Items![2];
+
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(windows);
+
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "Windows");
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "page.sys");
+        Assert.DoesNotContain(root.Items!, item => ReferenceEquals(item, windows));
+        Assert.Equal(700, root.Size);
+    }
+
+    [Fact]
+    public async Task DeleteCommand_updates_delete_status_while_operation_is_running()
+    {
+        var fileSystem = new PendingFs();
+        var vm = CreateVm(fileSystem);
+        var root = TestTree.Dir("C:\\",
+            TestTree.File("large.bin", 300));
+        var file = root.Items![0];
+
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.SetContextTarget(file);
+
+        var deleteTask = vm.DeleteCommand.ExecuteAsync(null);
+        await fileSystem.Started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.True(vm.IsDeleting);
+        Assert.Contains("Moving to Recycle Bin", vm.DeleteStatusText);
+        Assert.Contains("large.bin", vm.DeleteStatusText);
+
+        fileSystem.Completion.SetResult(new DeleteResult(true, null));
+        await deleteTask;
+
+        Assert.False(vm.IsDeleting);
+        Assert.Equal(string.Empty, vm.DeleteStatusText);
     }
 }

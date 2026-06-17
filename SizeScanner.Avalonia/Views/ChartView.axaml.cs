@@ -72,6 +72,21 @@ public partial class ChartView : UserControl
         return Vm.ResolveNode(HitTestSegment(position));
     }
 
+    private bool PrepareContextTarget(FsItem? node)
+    {
+        if (Vm is null)
+            return false;
+
+        if (Vm.SuppressesContextMenu(node))
+        {
+            Vm.SetContextTarget(null);
+            return false;
+        }
+
+        Vm.SetContextTarget(node);
+        return true;
+    }
+
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (Vm is null) return;
@@ -103,14 +118,11 @@ public partial class ChartView : UserControl
         if (props.IsRightButtonPressed)
         {
             _lastRightClickPosition = e.GetPosition(_chart);
-            if (Vm.SuppressesContextMenu(node))
+            if (!PrepareContextTarget(node))
             {
-                Vm.SetContextTarget(null);
                 e.Handled = true;
                 return;
             }
-
-            Vm.SetContextTarget(node);
         }
     }
 
@@ -120,10 +132,9 @@ public partial class ChartView : UserControl
             return;
 
         var node = HitTest(position);
-        if (!Vm.SuppressesContextMenu(node))
+        if (PrepareContextTarget(node))
             return;
 
-        Vm.SetContextTarget(null);
         e.Handled = true;
     }
 
@@ -133,10 +144,9 @@ public partial class ChartView : UserControl
             return;
 
         var node = HitTest(position);
-        if (!Vm.SuppressesContextMenu(node))
+        if (PrepareContextTarget(node))
             return;
 
-        Vm.SetContextTarget(null);
         e.Cancel = true;
     }
 }

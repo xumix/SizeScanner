@@ -24,6 +24,23 @@ public sealed class SunburstChartBuilderTests
     }
 
     [Fact]
+    public void Segments_on_same_ring_are_emitted_largest_first()
+    {
+        var root = TestTree.Dir("root",
+            TestTree.File("small", 10),
+            TestTree.File("big", 90),
+            TestTree.File("medium", 50));
+
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        var ringZeroNames = chart.Segments
+            .Where(s => s.RingIndex == 0)
+            .Select(s => s.Node!.Name)
+            .ToArray();
+        Assert.Equal(new[] { "big", "medium", "small" }, ringZeroNames);
+    }
+
+    [Fact]
     public void Level_zero_segments_are_on_inner_ring_and_split_full_circle()
     {
         var root = TestTree.Dir("root",

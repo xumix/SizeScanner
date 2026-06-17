@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System;
 using System.Collections.Generic;
 using Avalonia.Media;
 using ScannerCore;
@@ -18,8 +19,12 @@ namespace SizeScanner.Avalonia.Charting;
 /// </summary>
 public sealed class SunburstChartBuilder
 {
+    public const int MaxSegments = 100_000;
+    public const int MaxSegmentsPerSector = 100;
+
     private static readonly Color FreeSpaceColor = Colors.White;
     private static readonly Color FilteredBandColor = Color.FromRgb(128, 128, 128);
+    private static readonly Color OtherBandColor = Color.FromRgb(96, 96, 96);
     private static readonly Color InaccessibleColor = Colors.Red;
 
     private long _filterThreshold;
@@ -44,17 +49,28 @@ public sealed class SunburstChartBuilder
             return new SunburstChart([], 0, 0);
 
         ComputeDisplayedSizes(root);
-        var endAngle = AddChildren(
-            root.Items!,
-            level: 0,
-            startAngle: 0d,
-            sweepAngle: 360d,
-            parentColor: null,
-            denominator: total);
+        var endAngle = AddTopLevel(root, total);
         if (_filteredTotal > 0)
             AddFilteredRootSector(endAngle);
 
-        return new SunburstChart(_segments, _ringCount, total);
+        // _ringCount above is the planned depth used while laying out (collapse/recurse
+        // decisions). The per-sector budget and [Other] aggregation can stop the layout
+        // short of that depth, so the reported ring count reflects the rings actually drawn,
+        // preventing empty outer rings from cramping the visible ones.
+        var drawnRingCount = ComputeDrawnRingCount();
+        if (drawnRingCount == 0)
+            return new SunburstChart([], 0, 0);
+
+        return new SunburstChart(_segments, drawnRingCount, total);
+    }
+
+    private int ComputeDrawnRingCount()
+    {
+        var maxRing = -1;
+        foreach (var segment in _segments)
+            if (segment.RingIndex > maxRing)
+                maxRing = segment.RingIndex;
+        return maxRing + 1;
     }
 
     private int CountRings(FsItem node, int level)
@@ -67,7 +83,7 @@ public sealed class SunburstChartBuilder
         {
             if (!IsVisibleChild(child))
                 continue;
-            if (!IsRealDirectory(child) || child.Items is not { Count: > 0 })
+            if (!ChartNodeRules.IsRealDirectory(child) || child.Items is not { Count: > 0 })
                 continue;
             if (AnyVisibleRealDirectory(child.Items))
                 max = System.Math.Max(max, CountRings(child, level + 1));
@@ -83,7 +99,7 @@ public sealed class SunburstChartBuilder
             long filteredChildrenSize = 0;
             foreach (var child in node.Items)
             {
-                if (IsAlwaysVisibleRootEntry(child))
+                if (ChartNodeRules.IsAlwaysVisibleDriveEntry(child))
                 {
                     var size = System.Math.Max(0, child.Size);
                     _displayedSize[child] = size;
@@ -121,52 +137,196 @@ public sealed class SunburstChartBuilder
     private long DisplayedOf(FsItem item) =>
         _displayedSize.TryGetValue(item, out var value) ? value : 0;
 
-    private double AddChildren(
-        IReadOnlyList<FsItem> children,
-        int level,
-        double startAngle,
-        double sweepAngle,
-        SliceHsb? parentColor,
-        long denominator)
+    private double AddTopLevel(FsItem root, long total)
     {
-        var cursor = startAngle;
-        if (denominator <= 0)
-            return cursor;
+        var sectorBudget = MaxSegmentsPerSector;
+        var rootParent = new PendingParent(root, total, 0d, 360d, null, 0);
+        var sectors = EmitRing([rootParent], ring: 0, ref sectorBudget);
+        var endAngle = RingEndAngle(0);
 
-        for (var i = 0; i < children.Count; i++)
+        foreach (var sector in sectors)
         {
-            var child = children[i];
-            var childDisplayed = DisplayedOf(child);
-            if (childDisplayed <= 0)
-                continue;
+            var subtreeBudget = MaxSegmentsPerSector - 1;
+            ExpandSector(sector, ref subtreeBudget);
+        }
 
-            var childSweep = sweepAngle * childDisplayed / denominator;
-            var hsb = parentColor is null
-                ? SliceColorPalette.LevelBaseColor(i, children.Count)
-                : SliceColorPalette.ChildShade(parentColor.Value, i, children.Count);
+        return endAngle;
+    }
 
-            if (IsLayoutCollapsedFile(child, level))
+    private readonly record struct PendingParent(
+        FsItem Node,
+        long Denominator,
+        double StartAngle,
+        double Sweep,
+        SliceHsb? Color,
+        int ChildRing);
+
+    private sealed class ParentRingState
+    {
+        public double Cursor;
+        public int EmittedCount;
+        public int VisibleCount;
+        public int ChildRank;
+        public long EmittedDisplayed;
+        public long EmittedSize;
+        public long TotalDisplayed;
+        public long TotalSize;
+    }
+
+    private void ExpandSector(PendingParent sector, ref int budget)
+    {
+        var frontier = new List<PendingParent> { sector };
+
+        while (frontier.Count > 0 && budget > 0 && _segments.Count < MaxSegments)
+            frontier = EmitRing(frontier, frontier[0].ChildRing, ref budget);
+    }
+
+    private List<PendingParent> EmitRing(IReadOnlyList<PendingParent> parents, int ring, ref int budget)
+    {
+        var candidates = new List<(int ParentIndex, FsItem Child)>();
+        var parentStates = new ParentRingState[parents.Count];
+
+        for (var p = 0; p < parents.Count; p++)
+        {
+            var parent = parents[p];
+            var state = new ParentRingState { Cursor = parent.StartAngle };
+            if (parent.Node.Items is { Count: > 0 } children)
             {
-                cursor += childSweep;
+                foreach (var child in children)
+                {
+                    var displayed = DisplayedOf(child);
+                    if (displayed <= 0)
+                        continue;
+
+                    candidates.Add((p, child));
+                    state.VisibleCount++;
+                    state.TotalDisplayed += displayed;
+                    state.TotalSize += child.Size;
+                }
+            }
+
+            parentStates[p] = state;
+        }
+
+        if (candidates.Count == 0)
+            return [];
+
+        candidates.Sort((a, b) =>
+        {
+            var cmp = DisplayedOf(b.Child).CompareTo(DisplayedOf(a.Child));
+            return cmp != 0
+                ? cmp
+                : string.Compare(a.Child.Name, b.Child.Name, StringComparison.Ordinal);
+        });
+
+        var nextFrontier = new List<PendingParent>();
+
+        foreach (var (parentIndex, child) in candidates)
+        {
+            if (budget <= 0 || _segments.Count >= MaxSegments)
+                break;
+
+            var parent = parents[parentIndex];
+            var state = parentStates[parentIndex];
+            var childDisplayed = DisplayedOf(child);
+            var childSweep = parent.Sweep * childDisplayed / parent.Denominator;
+
+            if (IsLayoutCollapsedFile(child, ring))
+            {
+                state.ChildRank++;
+                state.Cursor += childSweep;
                 continue;
             }
 
+            var remainingAtParent = state.VisibleCount - state.ChildRank;
+            if (remainingAtParent > 1 && budget == 1)
+                break;
+
+            var hsb = SegmentHsb(parent, state.ChildRank, state.VisibleCount);
+            state.ChildRank++;
+
             _segments.Add(new SunburstSegment(
                 child,
-                level,
-                level,
+                ring,
+                ring,
                 child.Size,
-                cursor,
+                state.Cursor,
                 childSweep,
                 SegmentColor(child, hsb.ToColor())));
 
-            if (ShouldRecurseInto(child, level))
-                AddChildren(child.Items!, level + 1, cursor, childSweep, hsb, childDisplayed);
+            state.Cursor += childSweep;
+            state.EmittedCount++;
+            state.EmittedDisplayed += childDisplayed;
+            state.EmittedSize += child.Size;
+            budget--;
 
-            cursor += childSweep;
+            if (ShouldRecurseInto(child, ring))
+            {
+                nextFrontier.Add(new PendingParent(
+                    child,
+                    childDisplayed,
+                    state.Cursor - childSweep,
+                    childSweep,
+                    hsb,
+                    ring + 1));
+            }
         }
 
-        return cursor;
+        AddOtherSegments(parents, parentStates, ring, ref budget);
+        return nextFrontier;
+    }
+
+    private SliceHsb SegmentHsb(PendingParent parent, int childRank, int visibleCount) =>
+        parent.Color is { } color
+            ? SliceColorPalette.ChildShade(color, childRank, visibleCount)
+            : SliceColorPalette.LevelBaseColor(childRank, visibleCount);
+
+    private void AddOtherSegments(
+        IReadOnlyList<PendingParent> parents,
+        IReadOnlyList<ParentRingState> parentStates,
+        int ring,
+        ref int budget)
+    {
+        for (var p = 0; p < parents.Count; p++)
+        {
+            if (_segments.Count >= MaxSegments)
+                break;
+
+            var parent = parents[p];
+            var state = parentStates[p];
+            if (state.EmittedCount < 1)
+                continue;
+
+            var otherDisplayed = state.TotalDisplayed - state.EmittedDisplayed;
+            if (otherDisplayed <= 0)
+                continue;
+
+            var otherSize = state.TotalSize - state.EmittedSize;
+            var otherSweep = parent.Sweep * otherDisplayed / parent.Denominator;
+            var otherNode = new FsItem(ChartDisplayMetadata.OtherName, otherSize, isDir: false);
+
+            _segments.Add(new SunburstSegment(
+                otherNode,
+                ring,
+                ring,
+                otherSize,
+                state.Cursor,
+                otherSweep,
+                SegmentColor(otherNode, OtherBandColor)));
+
+            if (budget > 0)
+                budget--;
+            state.Cursor += otherSweep;
+        }
+    }
+
+    private double RingEndAngle(int ring)
+    {
+        var endAngle = 0d;
+        foreach (var segment in _segments)
+            if (segment.RingIndex == ring && segment.EndAngle > endAngle)
+                endAngle = segment.EndAngle;
+        return endAngle;
     }
 
     private void AddFilteredRootSector(double startAngle)
@@ -188,35 +348,25 @@ public sealed class SunburstChartBuilder
     private bool IsLayoutCollapsedFile(FsItem child, int level) =>
         _ringCount > 1
         && level == _ringCount - 1
-        && !IsRealDirectory(child)
-        && !IsAlwaysVisibleRootEntry(child);
+        && !ChartNodeRules.IsRealDirectory(child)
+        && !ChartNodeRules.IsAlwaysVisibleDriveEntry(child);
 
     private bool ShouldRecurseInto(FsItem child, int level) =>
         child.Items is { Count: > 0 }
-        && IsRealDirectory(child)
+        && ChartNodeRules.IsRealDirectory(child)
         && level + 1 < _ringCount
         && (level + 2 < _ringCount || AnyVisibleRealDirectory(child.Items));
 
     private bool IsVisibleChild(FsItem child) =>
-        child.Size > _filterThreshold || IsAlwaysVisibleRootEntry(child);
-
-    private static bool IsRealDirectory(FsItem item) =>
-        item.IsDir
-        && item.Name is not (
-            DriveScanMetadata.FreeSpaceName
-            or DriveScanMetadata.InaccessibleName
-            or ChartDisplayMetadata.FilteredName);
+        child.Size > _filterThreshold || ChartNodeRules.IsAlwaysVisibleDriveEntry(child);
 
     private bool AnyVisibleRealDirectory(IReadOnlyList<FsItem> children)
     {
         foreach (var child in children)
-            if (IsVisibleChild(child) && IsRealDirectory(child))
+            if (IsVisibleChild(child) && ChartNodeRules.IsRealDirectory(child))
                 return true;
         return false;
     }
-
-    private static bool IsAlwaysVisibleRootEntry(FsItem item) =>
-        item.Name is DriveScanMetadata.FreeSpaceName or DriveScanMetadata.InaccessibleName;
 
     private static Color SegmentColor(FsItem item, Color paletteColor) =>
         item.Name switch
@@ -224,6 +374,7 @@ public sealed class SunburstChartBuilder
             DriveScanMetadata.FreeSpaceName => FreeSpaceColor,
             DriveScanMetadata.InaccessibleName => InaccessibleColor,
             ChartDisplayMetadata.FilteredName => FilteredBandColor,
+            ChartDisplayMetadata.OtherName => OtherBandColor,
             _ => paletteColor
         };
 

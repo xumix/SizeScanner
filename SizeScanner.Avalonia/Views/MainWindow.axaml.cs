@@ -12,14 +12,13 @@ public partial class MainWindow : Window
 {
     public MainWindow() => InitializeComponent();
 
-    public MainWindow(MainWindowViewModel viewModel, ISettingsStore settingsStore, ITopLevelProvider topLevelProvider)
+    public MainWindow(MainWindowViewModel viewModel, ITopLevelProvider topLevelProvider)
         : this()
     {
         DataContext = viewModel;
 
-        var settings = settingsStore.Load();
-        if (settings.WindowWidth > 0) Width = settings.WindowWidth;
-        if (settings.WindowHeight > 0) Height = settings.WindowHeight;
+        if (viewModel.InitialWindowWidth > 0) Width = viewModel.InitialWindowWidth;
+        if (viewModel.InitialWindowHeight > 0) Height = viewModel.InitialWindowHeight;
 
         Opened += (_, _) =>
         {

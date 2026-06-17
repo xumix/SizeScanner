@@ -18,12 +18,11 @@
     <DockPanel>
         <Border DockPanel.Dock="Top" Padding="8,6"
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-                <Button Content="Browse..." Command="{Binding BrowseCommand}"
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="Toggle Inaccessible"
+                        Command="{Binding ToggleInaccessiblePaneCommand}"
                         IsEnabled="{Binding !IsScanning}" />
-                <Button Content="Rescan" Command="{Binding RescanCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
-                <Separator Height="NaN" Width="1" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
                 <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsScanning}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -38,6 +37,10 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                <Button Content="Browse..." Command="{Binding BrowseCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+                <Separator Height="NaN" Width="1" />
+                    <Button Content="Rescan" Command="{Binding RescanCommand}" IsEnabled="{Binding !IsScanning}" />
                 <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
                 <ProgressBar Width="280" Minimum="0" Maximum="100"
                              Value="{Binding ProgressValue}"
@@ -51,27 +54,19 @@
                 <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="8,0,0,0" />
                 <ComboBox ItemsSource="{Binding FilterOptions}"
                           SelectedIndex="{Binding FilterIndex}"
-                          IsEnabled="{Binding !IsScanning}">
-                    <ComboBox.ItemTemplate>
-                        <DataTemplate x:DataType="models:FilterOption">
-                            <TextBlock Text="{Binding Label}" />
-                        </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                </ComboBox>
-                <Separator Height="NaN" Width="1" />
-                <Button Content="Toggle Inaccessible" Command="{Binding ToggleInaccessiblePaneCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
-            </StackPanel>
+                          IsEnabled="{Binding !IsScanning}" />
+                </StackPanel>
+            </DockPanel>
         </Border>
 
         <Border DockPanel.Dock="Bottom" Padding="8,4"
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <StackPanel Orientation="Horizontal" Spacing="16">
-                <TextBlock Text="{Binding StatusText}" />
+                <TextBlock Text="{Binding DisplayStatusText}" />
                 <TextBlock Text="{Binding StatusDetails}" TextTrimming="CharacterEllipsis"
                            IsVisible="{Binding IsScanning}" />
                 <TextBlock Text="{Binding Chart.HoverPath}" TextTrimming="CharacterEllipsis"
-                           IsVisible="{Binding !IsScanning}" />
+                           IsVisible="{Binding HoverStatusVisible}" />
             </StackPanel>
         </Border>
 

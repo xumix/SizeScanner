@@ -16,4 +16,11 @@ public static class DriveScanMetadata
 
     public static FsItem GetFreeSpaceEntry(FsItem driveRoot) =>
         driveRoot.Items![FreeSpaceIndex];
+
+    public static void PrependSyntheticEntries(FsItem driveRoot, FsItem freeSpace, FsItem inaccessible)
+    {
+        freeSpace.Parent = driveRoot;
+        inaccessible.Parent = driveRoot;
+        (driveRoot.Items ??= []).InsertRange(0, new[] { freeSpace, inaccessible });
+    }
 }

@@ -49,7 +49,8 @@ public sealed class ViewLocatorTests
     private sealed class NoopFs : IFileSystemActions
     {
         public void ShowInExplorer(string path) { }
-        public bool TryDelete(string path, bool permanent, out string? error) { error = null; return true; }
+        public Task<DeleteResult> DeleteAsync(string path, bool permanent) =>
+            Task.FromResult(new DeleteResult(true, null));
     }
 
     private sealed class NoopDialogs : IDialogService

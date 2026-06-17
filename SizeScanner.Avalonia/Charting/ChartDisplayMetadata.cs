@@ -6,4 +6,5 @@ namespace SizeScanner.Avalonia.Charting;
 public static class ChartDisplayMetadata
 {
     public const string FilteredName = "[Filtered]";
+    public const string OtherName = "[Other]";
 }
