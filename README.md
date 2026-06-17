@@ -1,8 +1,8 @@
 # SizeScanner
 
-A Windows disk-usage visualizer inspired by [Steffen Gerlach's Scanner](http://www.steffengerlach.de/freeware/) and [@AgentMC SizeScanner](https://github.com/AgentMC/SizeScanner).
+A FAST(!) Windows disk-usage visualizer inspired by [Steffen Gerlach's Scanner](http://www.steffengerlach.de/freeware/) and [@AgentMC SizeScanner](https://github.com/AgentMC/SizeScanner).
 
-Pick a drive or folder, wait for the scan, and explore where space goes through nested doughnut charts. Hover for names and sizes; right-click a slice to open it in Explorer or delete it.
+With SizeScanner you can scan any drive or folder with blazing speed, vizualize the result using the sunburst chart and delete the outliers easily.
 
 ![](https://raw.githubusercontent.com/xumix/SizeScanner/master/Img/main_window.png)
 
@@ -28,8 +28,6 @@ dotnet restore SizeScanner.slnx
 dotnet build SizeScanner.slnx -c Debug
 dotnet run --project .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj
 ```
-
-When the window opens, click a drive letter in the toolbar (for example `C:\`) or **Browse...** to pick a folder, then wait for the progress bar to finish.
 
 ### Console harness (for development purposes)
 

@@ -18,7 +18,11 @@
     <DockPanel>
         <Border DockPanel.Dock="Top" Padding="8,6"
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-            <StackPanel Orientation="Horizontal" Spacing="6">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Content="Toggle Inaccessible"
+                        Command="{Binding ToggleInaccessiblePaneCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
                 <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsScanning}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -51,10 +55,8 @@
                 <ComboBox ItemsSource="{Binding FilterOptions}"
                           SelectedIndex="{Binding FilterIndex}"
                           IsEnabled="{Binding !IsScanning}" />
-                <Separator Height="NaN" Width="1" />
-                <Button Content="Toggle Inaccessible" Command="{Binding ToggleInaccessiblePaneCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
-            </StackPanel>
+                </StackPanel>
+            </DockPanel>
         </Border>
 
         <Border DockPanel.Dock="Bottom" Padding="8,4"

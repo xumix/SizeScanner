@@ -25,7 +25,7 @@ Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions li
 ## Windows / scanning specifics
 
 - **Platform**: x86/x64 AnyCPU; requires Windows APIs (`kernel32.dll`, `ntdll.dll`). Not cross-platform. Requires a Windows version supported by .NET 10.
-- **Size mode**: `ScanDrive` uses allocation size; `ScanDirectory` uses logical file size (`useAllocationSize` flag in `ScanUnitInternal`).
+- **Size mode**: drive scans use allocation size, directory scans use logical file size; `isDriveScan` flows from `DriveScanner` into `DirectoryScanner`'s `preferAllocatedSize` (allocation size vs `EndOfFile`).
 - **Progress**: `IProgress<ScanProgress>` callbacks from `DriveScanner` (throttled to 300 ms). UI wires `Progress<ScanProgress>` to the status bar and progress bar.
 - **Cancellation**: Both `ScanDrive` and `ScanDirectory` accept `CancellationToken`.
 - **Parallelism**: only top-level directory fan-out is parallel, and only when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe). HDDs and unknown volumes stay sequential.
@@ -52,6 +52,7 @@ dotnet publish .\SizeScanner.Avalonia\SizeScanner.Avalonia.csproj -c Release -r 
 - `Avalonia`, `Avalonia.Desktop`, `Avalonia.Themes.Fluent`, `Avalonia.Fonts.Inter` — Avalonia UI
 - `CommunityToolkit.Mvvm`, `Microsoft.Extensions.DependencyInjection` — MVVM and DI
 - `Spectre.Console` — console harness output only
+- `MinVer` — Git tag-based assembly versioning (`v*` tags, `MinVerTagPrefix=v`)
 - `xunit.v3`, `Microsoft.NET.Test.Sdk`, `coverlet.collector` — test projects
 
 ## CI and release
@@ -65,7 +66,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 
 ## Conventions when editing
 
-- Keep P/Invoke and native structs inside `DirectoryScanner` — do not scatter Win32 calls into UI.
+- Keep P/Invoke and native structs in `ScannerCore` (`DirectoryScanner` enumeration, `VolumeParallelismPolicy` seek-penalty detection) — never call Win32 from the UI.
 - Avalonia UI lives in `SizeScanner.Avalonia/`; keep platform/IO behind interfaces in `Abstractions/` with Windows implementations in `Services/`. Chart building belongs in `Charting/SunburstChartBuilder.cs`; view-models in `ViewModels/`.
 - Settings persist to `%AppData%\SizeScanner\settings.avalonia.json` via `JsonSettingsStore` and `Models/UserSettings.cs`.
 - The application must stay **native AoT and trimming compatible** (`PublishAot`, `PublishTrimmed`, `IsAotCompatible`). Avoid reflection/dynamic activation patterns unless they are explicitly annotated and tested with publish.
@@ -78,6 +79,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 
 - `ScannerCore/DirectoryScanner.cs` — symlink/offline handling, native enumeration
 - `ScannerCore/DirectoryWalkEngine.cs` — scan tree walk, SSD-only top-level parallelism
+- `ScannerCore/VolumeParallelismPolicy.cs` — P/Invoke seek-penalty detection gating parallelism
 - `ScannerCore/DriveScanner.cs` — scan orchestration, progress, inaccessible tracking
 - `ScannerCore/DriveScanMetadata.cs` — synthetic drive scan entry names/accessors/insertion
 - `ScannerCore/ScanProgress.cs` — progress report record for `IProgress`
