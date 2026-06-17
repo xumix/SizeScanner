@@ -68,7 +68,7 @@ public sealed class DirectoryWalkEngine : IScanEngine
         try
         {
             Parallel.ForEach(subDirs, options,
-                child => WalkDirectory(child, Path.Combine(parentPath, child.Name), ctx, parallelChildren: false));
+                child => WalkDirectory(child, Path.Combine(parentPath, child.Name), ctx, parallelChildren: true));
         }
         catch (OperationCanceledException)
         {
