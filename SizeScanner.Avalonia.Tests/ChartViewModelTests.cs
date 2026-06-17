@@ -46,6 +46,24 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
+    public void HideFreeSpace_removes_free_space_but_keeps_inaccessible()
+    {
+        var vm = CreateVm();
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 50),
+            TestTree.Dir("Windows",
+                TestTree.File("kernel.sys", 300)),
+            TestTree.File("page.sys", 200));
+
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.FreeSpaceName);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == DriveScanMetadata.InaccessibleName);
+    }
+
+    [Fact]
     public void Scoping_into_directory_updates_scope_state()
     {
         var vm = CreateVm();

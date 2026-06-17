@@ -19,11 +19,6 @@
         <Border DockPanel.Dock="Top" Padding="8,6"
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <StackPanel Orientation="Horizontal" Spacing="6">
-                <Button Content="Browse..." Command="{Binding BrowseCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
-                <Button Content="Rescan" Command="{Binding RescanCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
-                <Separator Height="NaN" Width="1" />
                 <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsScanning}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -38,6 +33,10 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                <Button Content="Browse..." Command="{Binding BrowseCommand}"
+                        IsEnabled="{Binding !IsScanning}" />
+                <Separator Height="NaN" Width="1" />
+                    <Button Content="Rescan" Command="{Binding RescanCommand}" IsEnabled="{Binding !IsScanning}" />
                 <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
                 <ProgressBar Width="280" Minimum="0" Maximum="100"
                              Value="{Binding ProgressValue}"

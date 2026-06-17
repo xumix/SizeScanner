@@ -20,7 +20,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     private readonly IDialogService _dialogs;
 
     private FsItem? _scanRoot;
-    private FsItem? _chartRootWithoutSynthetic;
+    private FsItem? _chartRootWithoutFreeSpace;
     private bool _isDriveScan;
     private bool _includeFreeSpace;
     private float _filterPercent;
@@ -48,7 +48,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         _scanRoot = scanRoot;
         _isDriveScan = isDrive;
         _targetPath = targetPath;
-        _chartRootWithoutSynthetic = BuildChartRootWithoutSyntheticEntries(scanRoot, isDrive);
+        _chartRootWithoutFreeSpace = BuildChartRootWithoutFreeSpace(scanRoot, isDrive);
         _scopedRoot = null;
         UpdateScopeState();
     }
@@ -178,7 +178,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     private FsItem GetBaseChartRoot() =>
         _includeFreeSpace && _isDriveScan
             ? _scanRoot!
-            : _chartRootWithoutSynthetic ?? _scanRoot!;
+            : _chartRootWithoutFreeSpace ?? _scanRoot!;
 
     private void UpdateScopeState()
     {
@@ -198,7 +198,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     {
         // From the scope/base root down to the hovered node (root-first). Walk via
         // Parent pointers, which always reference the real scan tree. GetBaseChartRoot()
-        // may return a synthetic-stripped clone whose children still point at _scanRoot,
+        // may return a free-space-stripped clone whose children still point at _scanRoot,
         // so stop on the real root to avoid overshooting and including the drive root.
         var stop = _scopedRoot ?? _scanRoot;
         var chain = new List<FsItem>();
@@ -216,14 +216,19 @@ public sealed partial class ChartViewModel : ViewModelBase
         return path;
     }
 
-    private static FsItem? BuildChartRootWithoutSyntheticEntries(FsItem scanRoot, bool isDrive)
+    private static FsItem? BuildChartRootWithoutFreeSpace(FsItem scanRoot, bool isDrive)
     {
         if (!isDrive || scanRoot.Items is null) return null;
 
-        var stripped = new FsItem(scanRoot.Name, scanRoot.Size, scanRoot.IsDir)
+        // "Hide free space" must remove only the [Free space] entry; the
+        // [Inaccessible] synthetic entry stays visible on the chart.
+        var items = scanRoot.Items.ToList();
+        if (items.Count > DriveScanMetadata.FreeSpaceIndex
+            && items[DriveScanMetadata.FreeSpaceIndex].Name == DriveScanMetadata.FreeSpaceName)
         {
-            Items = scanRoot.Items.Skip(DriveScanMetadata.SyntheticEntryCount).ToList()
-        };
-        return stripped;
+            items.RemoveAt(DriveScanMetadata.FreeSpaceIndex);
+        }
+
+        return new FsItem(scanRoot.Name, scanRoot.Size, scanRoot.IsDir) { Items = items };
     }
 }
