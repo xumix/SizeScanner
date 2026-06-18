@@ -9,7 +9,8 @@ namespace SizeScanner.Avalonia.Charting;
 public sealed record SunburstChart(
     IReadOnlyList<SunburstSegment> Segments,
     int RingCount,
-    long TotalSize)
+    long TotalSize,
+    long UsedTotalSize)
 {
     private IReadOnlyList<SunburstSegment>[]? _ringIndex;
 

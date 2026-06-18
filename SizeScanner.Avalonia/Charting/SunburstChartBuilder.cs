@@ -42,11 +42,12 @@ public sealed class SunburstChartBuilder
         _ringCount = root.Items is { Count: > 0 } ? CountRings(root, level: 0) : 0;
 
         if (_ringCount == 0)
-            return new SunburstChart([], 0, 0);
+            return new SunburstChart([], 0, 0, 0);
 
         var total = FilterThreshold.GetDisplayTotal(root);
+        var usedTotal = FilterThreshold.GetUsedTotal(root);
         if (total <= 0)
-            return new SunburstChart([], 0, 0);
+            return new SunburstChart([], 0, 0, 0);
 
         ComputeDisplayedSizes(root);
         var endAngle = AddTopLevel(root, total);
@@ -59,9 +60,9 @@ public sealed class SunburstChartBuilder
         // preventing empty outer rings from cramping the visible ones.
         var drawnRingCount = ComputeDrawnRingCount();
         if (drawnRingCount == 0)
-            return new SunburstChart([], 0, 0);
+            return new SunburstChart([], 0, 0, 0);
 
-        return new SunburstChart(_segments, drawnRingCount, total);
+        return new SunburstChart(_segments, drawnRingCount, total, usedTotal);
     }
 
     private int ComputeDrawnRingCount()

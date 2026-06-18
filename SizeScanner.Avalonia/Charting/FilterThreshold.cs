@@ -20,4 +20,13 @@ public static class FilterThreshold
         displayRoot.Items is { Count: > 0 } items
             ? items.Sum(i => System.Math.Max(0, i.Size))
             : System.Math.Max(0, displayRoot.Size);
+
+    /// <summary>
+    /// Sum of immediate children excluding the synthetic <see cref="DriveScanMetadata.FreeSpaceName"/> entry.
+    /// Used for the chart center label; chart arc layout still uses <see cref="GetDisplayTotal"/>.
+    /// </summary>
+    public static long GetUsedTotal(FsItem displayRoot) =>
+        displayRoot.Items is { Count: > 0 } items
+            ? items.Where(i => !ChartNodeRules.IsFreeSpace(i)).Sum(i => System.Math.Max(0, i.Size))
+            : System.Math.Max(0, displayRoot.Size);
 }

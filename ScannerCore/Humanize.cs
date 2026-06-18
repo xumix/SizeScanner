@@ -17,7 +17,7 @@ namespace ScannerCore
                 sufIdx++;
                 output /= 1024;
             }
-            return string.Format(CultureInfo.InvariantCulture, "{0:F} {1}Byte(s)", output, Suffixes[sufIdx]);
+            return string.Format(CultureInfo.InvariantCulture, "{0:F} {1}B", output, Suffixes[sufIdx]);
         }
 
         public static string FsItem(FsItem source)

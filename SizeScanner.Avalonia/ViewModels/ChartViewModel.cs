@@ -35,7 +35,7 @@ public sealed partial class ChartViewModel : ViewModelBase
         _dialogs = dialogs;
     }
 
-    [ObservableProperty] private SunburstChart _layout = new([], 0, 0);
+    [ObservableProperty] private SunburstChart _layout = new([], 0, 0, 0);
     [ObservableProperty] private bool _isScoped;
     [ObservableProperty] private string _scopeLabel = string.Empty;
     [ObservableProperty] private string _hoverPath = string.Empty;
@@ -67,7 +67,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     {
         if (_scanRoot is null)
         {
-            Layout = new SunburstChart([], 0, 0);
+            Layout = new SunburstChart([], 0, 0, 0);
             return;
         }
 

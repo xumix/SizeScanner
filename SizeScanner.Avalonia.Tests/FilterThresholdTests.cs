@@ -38,6 +38,17 @@ public sealed class FilterThresholdTests
     }
 
     [Fact]
+    public void GetUsedTotal_excludes_free_space_but_keeps_other_children()
+    {
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 25),
+            TestTree.File("page.sys", 200));
+
+        Assert.Equal(225, FilterThreshold.GetUsedTotal(root));
+    }
+
+    [Fact]
     public void Compute_returns_percent_times_display_total()
     {
         var root = TestTree.Dir("folder",
