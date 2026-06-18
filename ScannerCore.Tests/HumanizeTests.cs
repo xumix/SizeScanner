@@ -12,7 +12,7 @@ public sealed class HumanizeTests
     public void Size_does_not_throw_for_max_long()
     {
         var text = Humanize.Size(long.MaxValue);
-        Assert.Contains("Byte(s)", text);
+        Assert.Contains("B", text);
     }
 
     [Fact]
@@ -20,12 +20,12 @@ public sealed class HumanizeTests
     {
         // 1 EB = 1024^6 bytes. Largest defined suffix is "P"; value must not overflow Suffixes.
         var text = Humanize.Size(1L << 60);
-        Assert.Contains("PByte(s)", text);
+        Assert.Contains("PB", text);
     }
 
     [Fact]
     public void Size_formats_kilobytes()
     {
-        Assert.Equal("2.00 KByte(s)", Humanize.Size(2048));
+        Assert.Equal("2.00 KB", Humanize.Size(2048));
     }
 }
