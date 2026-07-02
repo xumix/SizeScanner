@@ -28,12 +28,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Install .NET Core
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
           cache: true
@@ -42,7 +42,7 @@ jobs:
             Directory.Packages.props
 
       - name: Setup MSBuild.exe
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       - name: Restore the application
         run: dotnet restore $env:Solution_Name -r win-x64
@@ -60,13 +60,13 @@ jobs:
         run: Compress-Archive -Path publish/* -DestinationPath SizeScanner-win-x64.zip
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SizeScanner-win-x64
           path: publish/
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: SizeScanner-win-x64.zip
           generate_release_notes: true
