@@ -165,7 +165,6 @@ public sealed class SunburstChartBuilder
     private sealed class ParentRingState
     {
         public double Cursor;
-        public int EmittedCount;
         public int VisibleCount;
         public int ChildRank;
         public long EmittedDisplayed;
@@ -264,7 +263,6 @@ public sealed class SunburstChartBuilder
                 SegmentColor(child, hsb.ToColor())));
 
             state.Cursor += childSweep;
-            state.EmittedCount++;
             state.EmittedDisplayed += childDisplayed;
             state.EmittedSize += child.Size;
             budget--;

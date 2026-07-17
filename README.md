@@ -38,6 +38,13 @@ dotnet run --project .\ScannerConsole\ScannerConsole.csproj -- C:\some\folder
 
 Use this to validate scanner changes without launching the chart UI.
 
+### Memory-bounded scans
+
+SizeScanner calculates exact reachable sizes but retains only a bounded set of
+the largest entries. Less significant entries are combined into `[Other]`.
+Opening a retained directory rescans that scope for more detail. `[Other]`
+cannot be opened because it can represent multiple paths.
+
 ## License
 
 [GNU Affero General Public License v3.0](LICENSE)

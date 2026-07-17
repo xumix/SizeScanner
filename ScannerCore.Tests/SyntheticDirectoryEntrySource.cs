@@ -48,10 +48,10 @@ internal sealed class SyntheticDirectoryEntrySource(
                 return DirectoryBatchResult.Completed;
 
             var end = Math.Min(entryCount, _index + 256);
+            Span<char> name = stackalloc char[32];
+            "entry-".AsSpan().CopyTo(name);
             for (; _index < end; _index++)
             {
-                Span<char> name = stackalloc char[32];
-                "entry-".AsSpan().CopyTo(name);
                 _index.TryFormat(
                     name[6..], out var written, "D8");
                 sink.OnEntry(

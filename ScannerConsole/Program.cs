@@ -75,6 +75,10 @@ namespace ScannerConsole
 
             AnsiConsole.MarkupLine($"[green]Complete[/] in {elapsed.Elapsed.TotalSeconds:F2} seconds");
             AnsiConsole.MarkupLine($"[bold]Total size:[/] {Markup.Escape(Humanize.Size(root.Size))}");
+            AnsiConsole.MarkupLine(
+                $"[bold]Retained nodes:[/] {root.CountRetainedNodes():N0}");
+            AnsiConsole.MarkupLine(
+                $"[bold]Inaccessible:[/] {scanner.Inaccessible.Length:N0} shown of {scanner.InaccessibleCount:N0}");
 
             var table = new Table { Title = new TableTitle("Inaccessible Paths") };
             table.AddColumn("Path");

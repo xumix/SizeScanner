@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -97,30 +95,6 @@ namespace ScannerCore
 
         IDirectoryEntryCursor? IDirectoryEntrySource.Open(string path) => Open(path);
 
-        public List<FsItem>? Scan(string dir, ref long processed)
-        {
-            using var cursor = Open(dir);
-            if (cursor is null)
-                return null;
-
-            var sink = new LegacyFsItemSink();
-            var rented = ArrayPool<byte>.Shared.Rent(BufferSize);
-            try
-            {
-                var buffer = rented.AsSpan(0, BufferSize);
-                while (cursor.ReadNext(buffer, sink) == DirectoryBatchResult.Entries)
-                {
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-            }
-
-            processed += sink.Size;
-            return sink.Items;
-        }
-
         private static unsafe void ParseBuffer(byte* basePtr, bool preferAllocatedSize, IDirectoryEntrySink sink)
         {
             const int OffsetNextEntry = 0;
@@ -160,22 +134,6 @@ namespace ScannerCore
                 if (nextEntryOffset == 0)
                     break;
                 ptr += nextEntryOffset;
-            }
-        }
-
-        /// <summary>
-        /// Temporary adapter that materializes a <see cref="List{FsItem}"/> from cursor batches.
-        /// Removed in Task 8 once callers consume <see cref="IDirectoryEntrySink"/> directly.
-        /// </summary>
-        private sealed class LegacyFsItemSink : IDirectoryEntrySink
-        {
-            public List<FsItem> Items { get; } = new();
-            public long Size { get; private set; }
-
-            public void OnEntry(ReadOnlySpan<char> name, long size, bool isDirectory)
-            {
-                Items.Add(new FsItem(new string(name), size, isDirectory));
-                Size += size;
             }
         }
 
