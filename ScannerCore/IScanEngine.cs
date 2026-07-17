@@ -24,4 +24,6 @@ public sealed class ScanResult
     public required FsItem Root { get; init; }
     public required long Total { get; init; }
     public required IReadOnlyList<string> Inaccessible { get; init; }
+    public long InaccessibleCount { get; init; }
+    public bool InaccessiblePathsTruncated { get; init; }
 }
