@@ -105,7 +105,7 @@ public sealed class ChartViewModelTests
         Assert.True(await vm.TryScopeAtAsync(windows));
         Assert.True(vm.IsScoped);
         Assert.Contains("Windows", vm.ScopeLabel);
-        Assert.Equal(["C:\\Windows"], scan.ScopeCalls);
+        Assert.Equal([("C:\\Windows", true)], scan.ScopeCalls);
 
         await vm.GoToRootCommand.ExecuteAsync(null);
         Assert.False(vm.IsScoped);
@@ -204,7 +204,7 @@ public sealed class ChartViewModelTests
 
         Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "b.dll");
         Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "a.dll");
-        Assert.Equal(["C:\\Windows", "C:\\Windows\\System32"], scan.ScopeCalls);
+        Assert.Equal([("C:\\Windows", true), ("C:\\Windows\\System32", true)], scan.ScopeCalls);
     }
 
     [Fact]
@@ -227,7 +227,7 @@ public sealed class ChartViewModelTests
 
         await vm.GoUpCommand.ExecuteAsync(null);
 
-        Assert.Equal(["C:\\A\\B", "C:\\A"], scan.ScopeCalls);
+        Assert.Equal([("C:\\A\\B", false), ("C:\\A", false)], scan.ScopeCalls);
         Assert.True(vm.IsScoped);
         Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "B2");
     }
@@ -249,7 +249,48 @@ public sealed class ChartViewModelTests
         await vm.GoUpCommand.ExecuteAsync(null);
 
         Assert.False(vm.IsScoped);
-        Assert.Equal(["C:\\A"], scan.ScopeCalls);
+        Assert.Equal([("C:\\A", false)], scan.ScopeCalls);
+    }
+
+    [Fact]
+    public async Task GoUpAsync_to_cached_root_rescans_when_root_is_stale()
+    {
+        // Repro for the GoUpAsync stale-root bug: a delete inside a scoped
+        // subtree marks the cached root stale, and going up to that cached
+        // root (rather than "Go to root") must still trigger a rescan instead
+        // of silently showing the stale tree with the deleted item still gone
+        // from the scope but present in the unrescanned root.
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var users = root.Items![0];
+        var scopedUsers = TestTree.Dir("Users", TestTree.File("profile.dat", 300));
+        scan.ScopeResult = _ => scopedUsers;
+        await vm.TryScopeAtAsync(users);
+
+        var scopedProfile = scopedUsers.Items![0];
+        vm.SetContextTarget(scopedProfile);
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        // The un-rescanned root tree must not be mutated by a scoped-tree delete.
+        Assert.Equal(500, root.Size);
+
+        var rescannedRoot = TestTree.Dir("C:\\", TestTree.File("page.sys", 200));
+        scan.RootResult = (_, _) => rescannedRoot;
+        FsItem? rescanned = null;
+        vm.RootRescanned += r => rescanned = r;
+
+        await vm.GoUpCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsScoped);
+        Assert.Same(rescannedRoot, rescanned);
+        Assert.Equal([("C:\\", false)], scan.RootCalls);
     }
 
     [Fact]

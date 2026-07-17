@@ -37,7 +37,8 @@ public sealed class ScanService : IScanService
         string target,
         CancellationToken cancellationToken,
         IProgress<ScanProgress> progress,
-        ScanTreeBudget? budget = null)
+        ScanTreeBudget? budget = null,
+        bool preferAllocatedSize = false)
     {
         // A fresh, throwaway scanner: unlike RunAsync, this must not mutate
         // LastTarget/IsDriveScan/Scanner, which belong to the root scan and
@@ -45,7 +46,7 @@ public sealed class ScanService : IScanService
         var scopeScanner = new DriveScanner();
 
         return await Task.Run(
-            () => scopeScanner.ScanDirectory(target, cancellationToken, progress, budget),
+            () => scopeScanner.ScanDirectory(target, cancellationToken, progress, budget, preferAllocatedSize),
             cancellationToken);
     }
 }

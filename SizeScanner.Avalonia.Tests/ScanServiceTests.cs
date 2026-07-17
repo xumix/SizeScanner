@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ScannerCore;
@@ -77,5 +78,30 @@ public sealed class ScanServiceTests
         var service = new ScanService();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             service.RunScopeAsync(dir.Path, cts.Token, new Progress<ScanProgress>(_ => { })));
+    }
+
+    [Fact]
+    public async Task RunScopeAsync_preferAllocatedSize_requests_allocation_size_not_logical_size()
+    {
+        // A scope rescan under a drive-rooted tree must preserve allocation-size
+        // semantics (global rule: drive scans use allocation size, directory scans
+        // use logical size). A 1-byte file's logical size is always 1, but its
+        // on-disk allocation is rounded up to at least a filesystem cluster.
+        using var dir = new TempDir();
+        dir.CreateFile("tiny.bin", 1);
+
+        var service = new ScanService();
+        var progress = new Progress<ScanProgress>(_ => { });
+
+        var logical = await service.RunScopeAsync(dir.Path, CancellationToken.None, progress, preferAllocatedSize: false);
+        var allocated = await service.RunScopeAsync(dir.Path, CancellationToken.None, progress, preferAllocatedSize: true);
+
+        var logicalSize = logical.Items!.Single(i => i.Name == "tiny.bin").Size;
+        var allocatedSize = allocated.Items!.Single(i => i.Name == "tiny.bin").Size;
+
+        Assert.Equal(1, logicalSize);
+        Assert.True(
+            allocatedSize > logicalSize,
+            $"Expected allocation size ({allocatedSize}) to exceed logical size ({logicalSize}) for a 1-byte file.");
     }
 }

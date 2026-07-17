@@ -25,5 +25,6 @@ public interface IScanService
         string target,
         CancellationToken cancellationToken,
         IProgress<ScanProgress> progress,
-        ScanTreeBudget? budget = null);
+        ScanTreeBudget? budget = null,
+        bool preferAllocatedSize = false);
 }

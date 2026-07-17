@@ -67,8 +67,11 @@ namespace ScannerCore
             return root;
         }
 
-        public FsItem ScanDirectory(string path, CancellationToken cancellationToken, IProgress<ScanProgress>? progress = null, ScanTreeBudget? budget = null) =>
-            ScanUnitInternal(path, isDriveScan: false, cancellationToken, progress, budget);
+        public FsItem ScanDirectory(string path, CancellationToken cancellationToken, IProgress<ScanProgress>? progress = null, ScanTreeBudget? budget = null, bool preferAllocatedSize = false) =>
+            // preferAllocatedSize lets a directory-target scan (e.g. a scope rescan under a
+            // drive-rooted tree) still request allocation size, matching the global rule that
+            // drive scans use allocation size and directory scans use logical size.
+            ScanUnitInternal(path, isDriveScan: preferAllocatedSize, cancellationToken, progress, budget);
 
         private FsItem ScanUnitInternal(string location, bool isDriveScan, CancellationToken token, IProgress<ScanProgress>? progress, ScanTreeBudget? budget)
         {

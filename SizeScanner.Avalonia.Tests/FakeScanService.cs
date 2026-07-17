@@ -22,7 +22,7 @@ internal sealed class FakeScanService : IScanService
     public DriveScanner Scanner { get; } = new();
 
     public List<(string Target, bool IsDrive)> RootCalls { get; } = [];
-    public List<string> ScopeCalls { get; } = [];
+    public List<(string Target, bool PreferAllocatedSize)> ScopeCalls { get; } = [];
 
     public Func<string, bool, FsItem>? RootResult { get; set; }
     public Func<string, FsItem>? ScopeResult { get; set; }
@@ -57,9 +57,10 @@ internal sealed class FakeScanService : IScanService
         string target,
         CancellationToken cancellationToken,
         IProgress<ScanProgress> progress,
-        ScanTreeBudget? budget = null)
+        ScanTreeBudget? budget = null,
+        bool preferAllocatedSize = false)
     {
-        ScopeCalls.Add(target);
+        ScopeCalls.Add((target, preferAllocatedSize));
 
         if (PendingScope is not null)
             return PendingScope.Task;

@@ -126,7 +126,8 @@ public sealed partial class ChartViewModel : ViewModelBase
                 path,
                 cts.Token,
                 new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath),
-                ScanTreeBudget.Default);
+                ScanTreeBudget.Default,
+                preferAllocatedSize: _isDriveScan);
 
             // Replacing rather than pushing preserves the "root tree + current
             // scope tree" memory bound: the previous scope tree has no owner
@@ -163,10 +164,10 @@ public sealed partial class ChartViewModel : ViewModelBase
         var parent = Directory.GetParent(_scopePath)?.FullName;
         if (parent is null || PathsEqual(parent, _rootPath))
         {
-            _scopedRoot = null;
-            _scopePath = string.Empty;
-            UpdateScopeState();
-            RebuildLayout();
+            // The cached root may have gone stale (e.g. a delete inside the scoped
+            // tree), so route through GoToRootAsync to rescan it when needed rather
+            // than always showing the stale cached tree.
+            await GoToRootAsync();
             return;
         }
 
@@ -239,7 +240,8 @@ public sealed partial class ChartViewModel : ViewModelBase
                 path,
                 cts.Token,
                 new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath),
-                ScanTreeBudget.Default);
+                ScanTreeBudget.Default,
+                preferAllocatedSize: _isDriveScan);
 
             _scopedRoot = scanned;
             _scopePath = path;
