@@ -77,6 +77,7 @@ public sealed class BoundedScanMemoryTests
 
         Console.WriteLine(
             $"Elapsed: {stopwatch.Elapsed}, " +
+            $"Total: {result.Total:N0}, " +
             $"Allocated: {(allocatedAfter - allocatedBefore):N0} bytes, " +
             $"Heap: {heapBytes:N0} bytes, " +
             $"Retained nodes: {retainedNodes:N0}");
