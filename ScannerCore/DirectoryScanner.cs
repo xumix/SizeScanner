@@ -12,7 +12,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ScannerCore
 {
-    public class DirectoryScanner
+    public class DirectoryScanner : IDirectoryEntrySource
     {
         private const int FileDirectoryInformation = 1;
         private const uint StatusSuccess = 0x00000000;
@@ -94,6 +94,8 @@ namespace ScannerCore
                 ? null
                 : new Cursor(handle, PreferAllocatedSize);
         }
+
+        IDirectoryEntryCursor? IDirectoryEntrySource.Open(string path) => Open(path);
 
         public List<FsItem>? Scan(string dir, ref long processed)
         {

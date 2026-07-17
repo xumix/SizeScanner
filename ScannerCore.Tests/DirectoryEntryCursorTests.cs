@@ -16,22 +16,23 @@ public sealed class DirectoryEntryCursorTests
     public void Cursor_reports_entries_batch_by_batch()
     {
         using var temp = new TemporaryDirectory();
-        temp.CreateFile("alpha.txt", 100);
-        temp.CreateFile("beta.bin", 250);
+        for (var i = 0; i < 32; i++)
+            temp.CreateFile($"entry-{i:D2}.txt", 10);
 
-        var scanner = new DirectoryScanner(preferAllocatedSize: false);
+        IDirectoryEntrySource scanner = new DirectoryScanner(preferAllocatedSize: false);
         using var cursor = scanner.Open(
             temp.Path + Path.DirectorySeparatorChar);
         Assert.NotNull(cursor);
 
         var sink = new RecordingSink();
-        var buffer = new byte[DirectoryScanner.BufferSize];
+        var buffer = new byte[512];
+        var batchCount = 0;
         while (cursor!.ReadNext(buffer, sink) == DirectoryBatchResult.Entries)
-        {
-        }
+            batchCount++;
 
-        Assert.Equal(350, sink.Size);
-        Assert.Equal(["alpha.txt", "beta.bin"], sink.Names.Order());
+        Assert.True(batchCount >= 2, $"Expected multiple native batches, got {batchCount}.");
+        Assert.Equal(320, sink.Size);
+        Assert.Equal(32, sink.Names.Count);
     }
 
     [Fact]
