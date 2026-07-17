@@ -72,6 +72,37 @@ public sealed class DriveScannerTests
         scanner.ScanDirectory(temp.Path, CancellationToken.None);
 
         Assert.Empty(scanner.Inaccessible);
+        Assert.Equal(0, scanner.InaccessibleCount);
+        Assert.False(scanner.InaccessiblePathsTruncated);
+    }
+
+    [Fact]
+    public void ScanDirectory_without_a_budget_uses_the_default_budget()
+    {
+        using var temp = new TemporaryDirectory();
+        temp.CreateFile("a.txt", 100);
+        temp.CreateFile("sub/b.txt", 250);
+
+        var scanner = new DriveScanner();
+        var root = scanner.ScanDirectory(temp.Path, CancellationToken.None);
+
+        Assert.Equal(350, root.Size);
+        Assert.True(root.CountRetainedNodes() <= ScanTreeBudget.Default.MaxRetainedNodes);
+    }
+
+    [Fact]
+    public void ScanDirectory_honors_a_custom_budget_to_bound_retained_nodes()
+    {
+        using var temp = new TemporaryDirectory();
+        for (var f = 0; f < 50; f++)
+            temp.CreateFile($"file{f}.dat", f + 1);
+
+        var scanner = new DriveScanner();
+        var budget = new ScanTreeBudget(maxRetainedNodes: 10, maxChildrenPerDirectory: 8);
+        var root = scanner.ScanDirectory(temp.Path, CancellationToken.None, progress: null, budget);
+
+        Assert.True(root.CountRetainedNodes() <= budget.MaxRetainedNodes);
+        Assert.Contains(root.Items!, item => item.IsAggregate);
     }
 
     [Fact]

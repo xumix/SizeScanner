@@ -44,6 +44,10 @@ namespace ScannerCore
 
         public string[] Inaccessible => _problematic.ToArray();
 
+        public long InaccessibleCount { get; private set; }
+
+        public bool InaccessiblePathsTruncated { get; private set; }
+
         public string? CurrentTarget { get; private set; }
 
         public string? CurrentScanned { get; private set; }
@@ -51,34 +55,38 @@ namespace ScannerCore
         public long GetDisplayThreshold(float percent, bool includeFreeSpace) =>
             (long)(percent * (includeFreeSpace ? _total : _occupied));
 
-        public FsItem ScanDrive(string driveName, CancellationToken cancellationToken = default, IProgress<ScanProgress>? progress = null)
+        public FsItem ScanDrive(string driveName, CancellationToken cancellationToken = default, IProgress<ScanProgress>? progress = null, ScanTreeBudget? budget = null)
         {
             var drive = new DriveInfo(driveName);
             _occupied = drive.TotalSize - drive.TotalFreeSpace;
 
-            var root = ScanUnitInternal(driveName, isDriveScan: true, cancellationToken, progress);
+            var root = ScanUnitInternal(driveName, isDriveScan: true, cancellationToken, progress, budget);
             var freeSpace = new FsItem(DriveScanMetadata.FreeSpaceName, drive.TotalFreeSpace, false);
             var inaccessible = new FsItem(DriveScanMetadata.InaccessibleName, Math.Max(0, _occupied - _total), false);
             DriveScanMetadata.PrependSyntheticEntries(root, freeSpace, inaccessible);
             return root;
         }
 
-        public FsItem ScanDirectory(string path, CancellationToken cancellationToken, IProgress<ScanProgress>? progress = null) =>
-            ScanUnitInternal(path, isDriveScan: false, cancellationToken, progress);
+        public FsItem ScanDirectory(string path, CancellationToken cancellationToken, IProgress<ScanProgress>? progress = null, ScanTreeBudget? budget = null) =>
+            ScanUnitInternal(path, isDriveScan: false, cancellationToken, progress, budget);
 
-        private FsItem ScanUnitInternal(string location, bool isDriveScan, CancellationToken token, IProgress<ScanProgress>? progress)
+        private FsItem ScanUnitInternal(string location, bool isDriveScan, CancellationToken token, IProgress<ScanProgress>? progress, ScanTreeBudget? budget)
         {
             _total = 0;
             _problematic = Array.Empty<string>();
+            InaccessibleCount = 0;
+            InaccessiblePathsTruncated = false;
             CurrentTarget = location;
             CurrentScanned = null;
             _progress = progress;
             _progressStopwatch = null;
             _isDriveScan = isDriveScan;
 
-            var result = _engine.Scan(location, isDriveScan, token, OnEngineProgress);
+            var result = _engine.Scan(location, isDriveScan, token, OnEngineProgress, budget ?? ScanTreeBudget.Default);
             _total = result.Total;
             _problematic = result.Inaccessible;
+            InaccessibleCount = result.InaccessibleCount;
+            InaccessiblePathsTruncated = result.InaccessiblePathsTruncated;
             ReportProgress(force: true);
             return result.Root;
         }

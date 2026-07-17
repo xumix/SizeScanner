@@ -16,7 +16,7 @@ public interface IScanEngine
 {
     bool CanHandle(string target, bool isDriveScan, bool isElevated);
 
-    ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress);
+    ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress, ScanTreeBudget budget);
 }
 
 public sealed class ScanResult

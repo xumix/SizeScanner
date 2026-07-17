@@ -26,7 +26,7 @@ public sealed class ScanEngineSelector : IScanEngine
 
     public bool CanHandle(string target, bool isDriveScan, bool isElevated) => true;
 
-    public ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress)
+    public ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress, ScanTreeBudget budget)
     {
         Exception? lastFailure = null;
         for (var i = 0; i < _engines.Count; i++)
@@ -36,7 +36,7 @@ public sealed class ScanEngineSelector : IScanEngine
                 continue;
             try
             {
-                return engine.Scan(target, isDriveScan, token, onProgress);
+                return engine.Scan(target, isDriveScan, token, onProgress, budget);
             }
             catch (OperationCanceledException)
             {

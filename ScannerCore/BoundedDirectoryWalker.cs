@@ -6,16 +6,24 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 
 namespace ScannerCore;
 
 /// <summary>
 /// One-pass bounded post-order walker: computes exact totals while retaining only a
-/// depth/width/count-bounded subset of the tree per <see cref="ScanTreeBudget"/>.
+/// depth/width/count-bounded subset of the tree per <see cref="ScanTreeBudget"/>. When
+/// <paramref name="parallelizeTopLevel"/> is set, the root's immediate subdirectories fan
+/// out across a bounded worker pool sized by <see cref="ScanTreeBudget.MaxDegreeOfParallelism"/>;
+/// every other level always walks sequentially.
 /// </summary>
-internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
+internal sealed class BoundedDirectoryWalker(
+    IDirectoryEntrySource source,
+    bool parallelizeTopLevel = false)
 {
     private readonly IDirectoryEntrySource _source = source;
+    private readonly bool _parallelizeTopLevel = parallelizeTopLevel;
 
     internal ScanResult Scan(
         string target,
@@ -30,9 +38,11 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
             DirectoryScanner.BufferSize);
         try
         {
+            var parallelizeChildren =
+                _parallelizeTopLevel && budget.MaxDegreeOfParallelism > 1;
             var root = WalkDirectory(
                 target, target, 0, budget.MaxRetainedNodes,
-                buffer, context);
+                buffer, context, parallelizeChildren);
             return new ScanResult
             {
                 Root = root,
@@ -55,7 +65,8 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
         int depth,
         int allowance,
         byte[] buffer,
-        WalkContext context)
+        WalkContext context,
+        bool parallelizeChildren = false)
     {
         context.Token.ThrowIfCancellationRequested();
         context.Report(path);
@@ -74,8 +85,32 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
             : DivideAllowance(
                 allowance, context.Budget.MaxChildrenPerDirectory);
         var collector = new BoundedChildCollector(partition.Slots);
-        long total = 0;
 
+        var total = parallelizeChildren
+            ? WalkChildrenInParallel(
+                cursor, path, depth, buffer, partition, collector, context)
+            : WalkChildrenSequentially(
+                cursor, path, depth, buffer, partition, collector, context);
+
+        var selected = collector.BuildChildren();
+        item.HasUnretainedChildren = collector.HasHiddenChildren;
+        if (allowance <= 1 && item.HasUnretainedChildren)
+            selected.Clear();
+        item.AttachChildren(selected);
+        item.Size = total;
+        return item;
+    }
+
+    private long WalkChildrenSequentially(
+        IDirectoryEntryCursor cursor,
+        string path,
+        int depth,
+        byte[] buffer,
+        ChildAllowance partition,
+        BoundedChildCollector collector,
+        WalkContext context)
+    {
+        long total = 0;
         while (true)
         {
             context.Token.ThrowIfCancellationRequested();
@@ -104,13 +139,160 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
                     $"Native directory enumeration failed for '{path}'.");
         }
 
-        var selected = collector.BuildChildren();
-        item.HasUnretainedChildren = collector.HasHiddenChildren;
-        if (allowance <= 1 && item.HasUnretainedChildren)
-            selected.Clear();
-        item.AttachChildren(selected);
-        item.Size = total;
-        return item;
+        return total;
+    }
+
+    /// <summary>
+    /// Enumerates <paramref name="path"/>'s own entries on the calling thread (files feed
+    /// the local <paramref name="collector"/> directly), then fans its immediate
+    /// subdirectories out across a bounded worker pool. A single consumer folds each
+    /// completed subtree back into <paramref name="collector"/>, so completion order can
+    /// never change output ordering versus the sequential walk.
+    /// </summary>
+    private long WalkChildrenInParallel(
+        IDirectoryEntryCursor cursor,
+        string path,
+        int depth,
+        byte[] buffer,
+        ChildAllowance partition,
+        BoundedChildCollector collector,
+        WalkContext context)
+    {
+        long fileTotal = 0;
+        var directoryNames = new List<string>();
+        while (true)
+        {
+            context.Token.ThrowIfCancellationRequested();
+            var sink = new BatchSink(collector);
+            var status = cursor.ReadNext(buffer, sink);
+            fileTotal = checked(fileTotal + sink.FileSize);
+            context.AddToTotal(sink.FileSize);
+            directoryNames.AddRange(sink.Directories);
+
+            if (status == DirectoryBatchResult.Completed)
+                break;
+            if (status == DirectoryBatchResult.Failed)
+                throw new IOException(
+                    $"Native directory enumeration failed for '{path}'.");
+        }
+
+        if (directoryNames.Count == 0)
+            return fileTotal;
+
+        var childTotal = RunChildWorkersAsync(
+                path, depth + 1, directoryNames,
+                partition.NodesPerChild, collector, context)
+            .GetAwaiter().GetResult();
+        return checked(fileTotal + childTotal);
+    }
+
+    private async Task<long> RunChildWorkersAsync(
+        string parentPath,
+        int childDepth,
+        List<string> directoryNames,
+        int allowance,
+        BoundedChildCollector collector,
+        WalkContext context)
+    {
+        var degree = Math.Max(1, context.Budget.MaxDegreeOfParallelism);
+        var work = Channel.CreateBounded<DirectoryWorkItem>(
+            new BoundedChannelOptions(2 * degree)
+            {
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+        var results = Channel.CreateBounded<FsItem>(
+            new BoundedChannelOptions(2 * degree)
+            {
+                SingleReader = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+
+        var producer = Task.Run(async () =>
+        {
+            try
+            {
+                foreach (var name in directoryNames)
+                    await work.Writer.WriteAsync(
+                        new DirectoryWorkItem(name), context.Token)
+                        .ConfigureAwait(false);
+            }
+            finally
+            {
+                work.Writer.Complete();
+            }
+        });
+
+        var workers = new Task[degree];
+        for (var i = 0; i < degree; i++)
+            workers[i] = RunWorkerAsync(
+                parentPath, childDepth, allowance,
+                work.Reader, results.Writer, context);
+
+        // Supervises the producer/workers and always completes the results channel
+        // (faulted or not) so the fan-in loop below never blocks forever.
+        var fanOut = Task.Run(async () =>
+        {
+            Exception? failure = null;
+            try { await producer.ConfigureAwait(false); }
+            catch (Exception ex) { failure = ex; }
+            try { await Task.WhenAll(workers).ConfigureAwait(false); }
+            catch (Exception ex) { failure ??= ex; }
+            results.Writer.Complete(failure);
+        });
+
+        long total = 0;
+        try
+        {
+            while (await results.Reader.WaitToReadAsync(context.Token)
+                       .ConfigureAwait(false))
+            {
+                while (results.Reader.TryRead(out var child))
+                {
+                    total = checked(total + child.Size);
+                    collector.ConsiderDirectory(child);
+                }
+            }
+        }
+        finally
+        {
+            await fanOut.ConfigureAwait(false);
+        }
+
+        return total;
+    }
+
+    private async Task RunWorkerAsync(
+        string parentPath,
+        int childDepth,
+        int allowance,
+        ChannelReader<DirectoryWorkItem> reader,
+        ChannelWriter<FsItem> resultsWriter,
+        WalkContext context)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(DirectoryScanner.BufferSize);
+        try
+        {
+            while (await reader.WaitToReadAsync(context.Token).ConfigureAwait(false))
+            {
+                while (reader.TryRead(out var work))
+                {
+                    var child = WalkDirectory(
+                        Path.Combine(parentPath, work.Name),
+                        work.Name,
+                        childDepth,
+                        allowance,
+                        buffer,
+                        context);
+                    await resultsWriter.WriteAsync(child, context.Token)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private static ChildAllowance DivideAllowance(
@@ -134,6 +316,8 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
     private readonly record struct ChildAllowance(
         int Slots,
         int NodesPerChild);
+
+    private readonly record struct DirectoryWorkItem(string Name);
 
     private sealed class BatchSink(
         BoundedChildCollector collector) : IDirectoryEntrySink
@@ -164,28 +348,33 @@ internal sealed class BoundedDirectoryWalker(IDirectoryEntrySource source)
         Action<string, long>? onProgress)
     {
         private readonly List<string> _inaccessible = [];
+        private readonly object _inaccessibleLock = new();
         private long _total;
+        private long _inaccessibleCount;
 
         public IDirectoryEntrySource Source { get; } = source;
         public ScanTreeBudget Budget { get; } = budget;
         public CancellationToken Token { get; } = token;
-        public long Total => _total;
+        public long Total => Interlocked.Read(ref _total);
         public IReadOnlyList<string> Inaccessible => _inaccessible;
-        public long InaccessibleCount { get; private set; }
+        public long InaccessibleCount => Interlocked.Read(ref _inaccessibleCount);
         public bool InaccessiblePathsTruncated =>
             InaccessibleCount > _inaccessible.Count;
 
         public void AddToTotal(long size) =>
-            _total = checked(_total + size);
+            Interlocked.Add(ref _total, size);
 
         public void AddInaccessible(string path)
         {
-            InaccessibleCount = checked(InaccessibleCount + 1);
-            if (_inaccessible.Count < Budget.MaxInaccessiblePaths)
-                _inaccessible.Add(path);
+            Interlocked.Increment(ref _inaccessibleCount);
+            lock (_inaccessibleLock)
+            {
+                if (_inaccessible.Count < Budget.MaxInaccessiblePaths)
+                    _inaccessible.Add(path);
+            }
         }
 
         public void Report(string path) =>
-            onProgress?.Invoke(path, _total);
+            onProgress?.Invoke(path, Total);
     }
 }
