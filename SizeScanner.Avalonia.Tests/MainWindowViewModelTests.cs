@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -14,21 +13,6 @@ namespace SizeScanner.Avalonia.Tests;
 
 public sealed class MainWindowViewModelTests
 {
-    private sealed class FakeScan : IScanService
-    {
-        private readonly FsItem _root;
-        public FakeScan(FsItem root) => _root = root;
-        public string LastTarget { get; private set; } = string.Empty;
-        public bool IsDriveScan { get; private set; }
-        public DriveScanner Scanner { get; } = new();
-        public Task<FsItem> RunAsync(string target, bool isDrive, CancellationToken ct, IProgress<ScanProgress> p)
-        {
-            LastTarget = target;
-            IsDriveScan = isDrive;
-            return Task.FromResult(_root);
-        }
-    }
-
     private sealed class FakeSettings : ISettingsStore
     {
         public UserSettings Loaded { get; set; } = new();
@@ -70,10 +54,15 @@ public sealed class MainWindowViewModelTests
     private static MainWindowViewModel CreateVm(
         FsItem root,
         FakeSettings? settings = null,
-        ChartViewModel? chart = null) =>
-        new(new FakeScan(root), settings ?? new FakeSettings(), new FakeDrives(),
-            new FakeElevation(), new FakeFolderPicker(),
-            chart ?? new ChartViewModel(new NoopFs(), new NoopDialogs()));
+        ChartViewModel? chart = null,
+        FakeScanService? scan = null)
+    {
+        scan ??= new FakeScanService();
+        scan.RootResult ??= (_, _) => root;
+        chart ??= new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        return new(scan, settings ?? new FakeSettings(), new FakeDrives(),
+            new FakeElevation(), new FakeFolderPicker(), chart);
+    }
 
     private static FsItem DriveRoot() =>
         TestTree.Dir("C:\\",
@@ -144,7 +133,7 @@ public sealed class MainWindowViewModelTests
     [Fact]
     public void DisplayStatusText_uses_chart_delete_status_while_deleting()
     {
-        var chart = new ChartViewModel(new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(new FakeScanService(), new NoopFs(), new NoopDialogs());
         var vm = CreateVm(DriveRoot(), chart: chart);
 
         chart.DeleteStatusText = "Moving to Recycle Bin: C:\\page.sys";
@@ -155,5 +144,79 @@ public sealed class MainWindowViewModelTests
         chart.IsDeleting = false;
 
         Assert.Equal("Ready", vm.DisplayStatusText);
+    }
+
+    [Fact]
+    public async Task CancelScan_cancels_an_active_root_scan()
+    {
+        var scan = new FakeScanService();
+        var pending = new TaskCompletionSource<FsItem>();
+        scan.PendingRoot = pending;
+        var vm = CreateVm(DriveRoot(), scan: scan);
+        vm.Initialize();
+
+        var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+        vm.CancelScanCommand.Execute(null);
+        pending.SetCanceled();
+        await scanTask;
+
+        Assert.False(vm.IsScanning);
+        Assert.Equal("Scan cancelled", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CancelScan_cancels_the_chart_scope_scan_when_no_root_scan_is_active()
+    {
+        var scan = new FakeScanService();
+        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+        var vm = CreateVm(root, chart: chart, scan: scan);
+        vm.Initialize();
+        await vm.ScanTargetAsync("C:\\", isDrive: false);
+
+        var dataDir = root.Items![0];
+        var pendingScope = new TaskCompletionSource<FsItem>();
+        scan.PendingScope = pendingScope;
+        var scopeTask = chart.TryScopeAtAsync(dataDir);
+
+        vm.CancelScanCommand.Execute(null);
+        pendingScope.SetCanceled();
+
+        Assert.False(await scopeTask);
+        Assert.False(chart.IsScopeScanning);
+    }
+
+    [Fact]
+    public async Task RootRescanned_from_chart_replaces_scan_root_and_refreshes_inaccessible_pane()
+    {
+        var scan = new FakeScanService();
+        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var root = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 50),
+            TestTree.Dir("Users", TestTree.File("profile.dat", 300)));
+        var vm = CreateVm(root, chart: chart, scan: scan);
+        vm.Initialize();
+        await vm.ScanTargetAsync("C:\\", isDrive: true);
+
+        Assert.Equal(Humanize.Size(50), vm.InaccessibleTotalSize);
+
+        var users = root.Items![2];
+        var scopedUsers = TestTree.Dir("Users", TestTree.File("profile.dat", 300));
+        scan.ScopeResult = _ => scopedUsers;
+        await chart.TryScopeAtAsync(users);
+
+        chart.SetContextTarget(scopedUsers.Items![0]);
+        await chart.DeleteCommand.ExecuteAsync(null); // marks the cached root stale
+
+        var rescannedRoot = TestTree.Dir("C:\\",
+            TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+            TestTree.File(DriveScanMetadata.InaccessibleName, 999));
+        scan.RootResult = (_, _) => rescannedRoot;
+
+        await chart.GoToRootCommand.ExecuteAsync(null);
+
+        Assert.False(chart.IsScoped);
+        Assert.Equal(Humanize.Size(999), vm.InaccessibleTotalSize);
     }
 }

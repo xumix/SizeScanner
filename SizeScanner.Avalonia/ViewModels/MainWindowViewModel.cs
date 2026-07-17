@@ -48,6 +48,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _folderPicker = folderPicker;
         Chart = chart;
         Chart.PropertyChanged += OnChartPropertyChanged;
+        Chart.RootRescanned += OnChartRootRescanned;
         _settings = _settingsStore.Load();
 
         for (var i = 0; i <= 8; i++)
@@ -96,9 +97,17 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public double InaccessiblePaneColumnMinWidth =>
         InaccessiblePaneVisible ? DefaultInaccessiblePaneWidth : 0;
 
-    public string DisplayStatusText => Chart.IsDeleting ? Chart.DeleteStatusText : StatusText;
+    public string DisplayStatusText =>
+        Chart.IsDeleting ? Chart.DeleteStatusText
+        : Chart.IsScopeScanning ? BuildScopeScanningStatusText()
+        : StatusText;
 
-    public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting;
+    public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting && !Chart.IsScopeScanning;
+
+    private string BuildScopeScanningStatusText() =>
+        string.IsNullOrEmpty(Chart.ScopeStatusText)
+            ? "Scanning..."
+            : $"Scanning {Chart.ScopeStatusText}...";
 
     private static readonly string[] FilterLabels =
     [
@@ -147,7 +156,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CancelScan() => _scanCts?.Cancel();
+    private void CancelScan()
+    {
+        if (_scanCts is not null)
+            _scanCts.Cancel();
+        else
+            Chart.CancelScopeScan();
+    }
 
     [RelayCommand]
     private void ToggleInaccessiblePane()
@@ -228,11 +243,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private void OnChartPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(ChartViewModel.IsDeleting) or nameof(ChartViewModel.DeleteStatusText))
+        if (e.PropertyName is nameof(ChartViewModel.IsDeleting) or nameof(ChartViewModel.DeleteStatusText)
+            or nameof(ChartViewModel.IsScopeScanning) or nameof(ChartViewModel.ScopeStatusText))
         {
             OnPropertyChanged(nameof(DisplayStatusText));
             OnPropertyChanged(nameof(HoverStatusVisible));
         }
+    }
+
+    private void OnChartRootRescanned(FsItem root)
+    {
+        _scanRoot = root;
+        PopulateInaccessible(_scan.IsDriveScan);
     }
 
     private void FinishCancelled()

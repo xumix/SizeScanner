@@ -14,5 +14,16 @@ public interface IScanService
     bool IsDriveScan { get; }
     DriveScanner Scanner { get; }
 
-    Task<FsItem> RunAsync(string target, bool isDrive, CancellationToken cancellationToken, IProgress<ScanProgress> progress);
+    Task<FsItem> RunAsync(
+        string target,
+        bool isDrive,
+        CancellationToken cancellationToken,
+        IProgress<ScanProgress> progress,
+        ScanTreeBudget? budget = null);
+
+    Task<FsItem> RunScopeAsync(
+        string target,
+        CancellationToken cancellationToken,
+        IProgress<ScanProgress> progress,
+        ScanTreeBudget? budget = null);
 }

@@ -42,4 +42,40 @@ public sealed class ScanServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             service.RunAsync(dir.Path, isDrive: false, cts.Token, new Progress<ScanProgress>(_ => { })));
     }
+
+    [Fact]
+    public async Task RunScopeAsync_builds_tree_without_mutating_root_scan_state()
+    {
+        using var dir = new TempDir();
+        dir.CreateFile("a.bin", 2048);
+        dir.CreateFile("sub\\b.bin", 1024);
+
+        using var rootDir = new TempDir();
+        rootDir.CreateFile("root.bin", 4096);
+
+        var service = new ScanService();
+        await service.RunAsync(rootDir.Path, isDrive: false, CancellationToken.None, new Progress<ScanProgress>(_ => { }));
+        var rootScanner = service.Scanner;
+
+        var scoped = await service.RunScopeAsync(dir.Path, CancellationToken.None, new Progress<ScanProgress>(_ => { }));
+
+        Assert.NotNull(scoped.Items);
+        Assert.True(scoped.Size >= 3072);
+        Assert.Equal(rootDir.Path, service.LastTarget);
+        Assert.False(service.IsDriveScan);
+        Assert.Same(rootScanner, service.Scanner);
+    }
+
+    [Fact]
+    public async Task RunScopeAsync_honors_cancellation()
+    {
+        using var dir = new TempDir();
+        dir.CreateFile("a.bin", 16);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var service = new ScanService();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.RunScopeAsync(dir.Path, cts.Token, new Progress<ScanProgress>(_ => { })));
+    }
 }
