@@ -230,6 +230,38 @@ public sealed class SunburstChartBuilderTests
     }
 
     [Fact]
+    public void Scanner_aggregate_renders_as_other_and_is_not_actionable()
+    {
+        var root = TestTree.Dir("root",
+            TestTree.File("kept", 80),
+            FsItem.CreateAggregate(20));
+
+        var chart = new SunburstChartBuilder().Build(root, 0);
+        var other = Assert.Single(
+            chart.Segments,
+            segment => segment.DisplayName == ChartDisplayMetadata.OtherName);
+
+        Assert.Equal(20, other.Size);
+        Assert.False(other.IsActionable);
+    }
+
+    [Fact]
+    public void Scanner_aggregate_and_layout_overflow_merge_into_one_other()
+    {
+        var children = Enumerable.Range(0, 150)
+            .Select(index => TestTree.File($"f{index}", 1))
+            .Append(FsItem.CreateAggregate(50))
+            .ToArray();
+        var root = TestTree.Dir("root", children);
+
+        var chart = new SunburstChartBuilder().Build(root, 0);
+
+        Assert.Single(
+            chart.Segments,
+            segment => segment.DisplayName == ChartDisplayMetadata.OtherName);
+    }
+
+    [Fact]
     public void HitTest_returns_segment_matching_ring_and_angle()
     {
         var root = TestTree.Dir("root",

@@ -136,6 +136,24 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
+    public void CannotScope_into_scanner_aggregate()
+    {
+        var vm = CreateVm();
+        var aggregate = FsItem.CreateAggregate(50);
+
+        Assert.False(vm.CanScopeTo(aggregate));
+    }
+
+    [Fact]
+    public void CanScope_into_directory_with_only_unretained_children()
+    {
+        var vm = CreateVm();
+        var dir = TestTree.DirWithUnretainedChildren("bounded", 500);
+
+        Assert.True(vm.CanScopeTo(dir));
+    }
+
+    [Fact]
     public void Hover_builds_status_path_and_tooltip()
     {
         var vm = CreateVm();

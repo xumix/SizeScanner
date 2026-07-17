@@ -100,7 +100,7 @@ public sealed class SunburstChartBuilder
             long filteredChildrenSize = 0;
             foreach (var child in node.Items)
             {
-                if (ChartNodeRules.IsAlwaysVisibleDriveEntry(child))
+                if (ChartNodeRules.IsAlwaysVisibleDriveEntry(child) || ChartNodeRules.IsAggregate(child))
                 {
                     var size = System.Math.Max(0, child.Size);
                     _displayedSize[child] = size;
@@ -172,6 +172,8 @@ public sealed class SunburstChartBuilder
         public long EmittedSize;
         public long TotalDisplayed;
         public long TotalSize;
+        public long PreAggregatedDisplayed;
+        public long PreAggregatedSize;
     }
 
     private void ExpandSector(PendingParent sector, ref int budget)
@@ -196,6 +198,14 @@ public sealed class SunburstChartBuilder
                 foreach (var child in children)
                 {
                     var displayed = DisplayedOf(child);
+
+                    if (ChartNodeRules.IsAggregate(child))
+                    {
+                        state.PreAggregatedDisplayed += displayed;
+                        state.PreAggregatedSize += child.Size;
+                        continue;
+                    }
+
                     if (displayed <= 0)
                         continue;
 
@@ -208,9 +218,6 @@ public sealed class SunburstChartBuilder
 
             parentStates[p] = state;
         }
-
-        if (candidates.Count == 0)
-            return [];
 
         candidates.Sort((a, b) =>
         {
@@ -248,6 +255,7 @@ public sealed class SunburstChartBuilder
 
             _segments.Add(new SunburstSegment(
                 child,
+                child.Name,
                 ring,
                 ring,
                 child.Size,
@@ -295,19 +303,26 @@ public sealed class SunburstChartBuilder
 
             var parent = parents[p];
             var state = parentStates[p];
-            if (state.EmittedCount < 1)
-                continue;
 
-            var otherDisplayed = state.TotalDisplayed - state.EmittedDisplayed;
+            var otherDisplayed =
+                state.PreAggregatedDisplayed
+                + state.TotalDisplayed
+                - state.EmittedDisplayed;
             if (otherDisplayed <= 0)
                 continue;
+            if (budget <= 0)
+                continue;
 
-            var otherSize = state.TotalSize - state.EmittedSize;
+            var otherSize =
+                state.PreAggregatedSize
+                + state.TotalSize
+                - state.EmittedSize;
             var otherSweep = parent.Sweep * otherDisplayed / parent.Denominator;
             var otherNode = new FsItem(ChartDisplayMetadata.OtherName, otherSize, isDir: false);
 
             _segments.Add(new SunburstSegment(
                 otherNode,
+                ChartDisplayMetadata.OtherName,
                 ring,
                 ring,
                 otherSize,
@@ -315,8 +330,7 @@ public sealed class SunburstChartBuilder
                 otherSweep,
                 SegmentColor(otherNode, OtherBandColor)));
 
-            if (budget > 0)
-                budget--;
+            budget--;
             state.Cursor += otherSweep;
         }
     }
@@ -338,6 +352,7 @@ public sealed class SunburstChartBuilder
 
         _segments.Add(new SunburstSegment(
             new FsItem(ChartDisplayMetadata.FilteredName, _filteredTotal, isDir: false),
+            ChartDisplayMetadata.FilteredName,
             0,
             0,
             _filteredTotal,

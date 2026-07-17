@@ -8,6 +8,7 @@ namespace SizeScanner.Avalonia.Charting;
 
 public sealed record SunburstSegment(
     FsItem? Node,
+    string DisplayName,
     int Level,
     int RingIndex,
     long Size,
@@ -16,8 +17,11 @@ public sealed record SunburstSegment(
     Color Color)
 {
     public double EndAngle => StartAngle + SweepAngle;
-    public bool IsActionable => Node is not null;
+
+    public bool IsActionable =>
+        Node is not null
+        && !ChartNodeRules.IsSyntheticSegment(Node);
 
     public override string ToString() =>
-        $"{Node?.Name ?? "<no name>"} Size: ({Humanize.Size(Size)})";
+        $"{DisplayName} Size: ({Humanize.Size(Size)})";
 }

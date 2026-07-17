@@ -16,8 +16,13 @@ public static class ChartNodeRules
     public static bool IsInaccessible(FsItem? item) =>
         item?.Name == DriveScanMetadata.InaccessibleName;
 
+    public static bool IsAggregate(FsItem? item) =>
+        item?.Kind == FsItemKind.Aggregate;
+
     public static bool IsSyntheticSegment(FsItem? item) =>
-        item?.Name is DriveScanMetadata.FreeSpaceName
+        item is null
+        || IsAggregate(item)
+        || item.Name is DriveScanMetadata.FreeSpaceName
             or DriveScanMetadata.InaccessibleName
             or ChartDisplayMetadata.FilteredName
             or ChartDisplayMetadata.OtherName;
@@ -32,5 +37,7 @@ public static class ChartNodeRules
         item is null || IsSyntheticSegment(item);
 
     public static bool IsScopable(FsItem? item) =>
-        item is { IsDir: true, Items.Count: > 0 } && !IsSyntheticSegment(item);
+        item is { IsDir: true, Items: not null }
+        && (item.Items.Count > 0 || item.HasUnretainedChildren)
+        && !IsSyntheticSegment(item);
 }
