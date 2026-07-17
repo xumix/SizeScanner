@@ -44,6 +44,15 @@ public sealed partial class ChartViewModel : ViewModelBase
     /// <summary>Raised after a stale cached root is successfully rescanned by <see cref="GoToRootAsync"/>.</summary>
     public event Action<FsItem>? RootRescanned;
 
+    /// <summary>
+    /// Set by <c>MainWindowViewModel</c> while a toolbar-initiated scan is calling the shared
+    /// <see cref="IScanService.RunAsync"/>. A stale "Go to root"/"Go up" rescan also calls
+    /// RunAsync, and the two are not mutually exclusive via <see cref="IsScopeScanning"/> alone
+    /// (that flag only guards against a second scope-side rescan), so this flag lets the chart
+    /// refuse to race the toolbar for the same non-thread-safe <c>DriveScanner</c>.
+    /// </summary>
+    public bool IsRootScanInProgress { get; set; }
+
     [ObservableProperty] private SunburstChart _layout = new([], 0, 0, 0);
     [ObservableProperty] private bool _isScoped;
     [ObservableProperty] private string _scopeLabel = string.Empty;
@@ -158,7 +167,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     [RelayCommand]
     private async Task GoUpAsync()
     {
-        if (_scopedRoot is null || IsScopeScanning)
+        if (_scopedRoot is null || IsScopeScanning || IsRootScanInProgress)
             return;
 
         var parent = Directory.GetParent(_scopePath)?.FullName;
@@ -177,7 +186,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     [RelayCommand]
     private async Task GoToRootAsync()
     {
-        if (_scopedRoot is null || IsScopeScanning)
+        if (_scopedRoot is null || IsScopeScanning || IsRootScanInProgress)
             return;
 
         if (!_rootIsStale)

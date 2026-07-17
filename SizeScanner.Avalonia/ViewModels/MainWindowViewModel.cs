@@ -67,7 +67,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _filterIndex = 4;
     [ObservableProperty] private int _freeSpaceIndex = 1;
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HoverStatusVisible))]
+    [NotifyPropertyChangedFor(nameof(HoverStatusVisible), nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(ScanDriveCommand), nameof(BrowseCommand), nameof(RescanCommand))]
     private bool _isScanning;
 
     [ObservableProperty] private bool _canRescan;
@@ -104,6 +105,9 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting && !Chart.IsScopeScanning;
 
+    /// <summary>Backs toolbar IsEnabled bindings; mirrors <see cref="CanStartScan"/> for XAML.</summary>
+    public bool IsBusy => IsScanning || Chart.IsScopeScanning;
+
     private string BuildScopeScanningStatusText() =>
         string.IsNullOrEmpty(Chart.ScopeStatusText)
             ? "Scanning..."
@@ -133,14 +137,24 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _suppressOptionChanges = false;
     }
 
-    [RelayCommand]
+    /// <summary>
+    /// Gates every toolbar scan-start action, not just <see cref="IsScanning"/>: a stale
+    /// "Go to root"/"Go up" rescan (<c>Chart.IsScopeScanning</c>) also calls the shared
+    /// <see cref="IScanService.RunAsync"/>, so the toolbar must stay disabled for that too
+    /// or two RunAsync calls can race the same non-thread-safe DriveScanner.
+    /// </summary>
+    private bool CanStartScan() => !IsScanning && !Chart.IsScopeScanning;
+
+    private bool CanExecuteRescan() => CanRescan && CanStartScan();
+
+    [RelayCommand(CanExecute = nameof(CanStartScan))]
     private async Task ScanDriveAsync(DriveItem? drive)
     {
         if (drive is not null)
             await ScanTargetAsync(drive.Root, isDrive: true);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanStartScan))]
     private async Task BrowseAsync()
     {
         var path = await _folderPicker.PickFolderAsync("Select a folder to scan");
@@ -148,7 +162,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await ScanTargetAsync(path, isDrive: false);
     }
 
-    [RelayCommand(CanExecute = nameof(CanRescan))]
+    [RelayCommand(CanExecute = nameof(CanExecuteRescan))]
     private async Task RescanAsync()
     {
         if (!string.IsNullOrEmpty(_scan.LastTarget))
@@ -180,11 +194,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public async Task ScanTargetAsync(string target, bool isDrive)
     {
+        // Defense in depth alongside CanStartScan()/CanExecuteRescan(): refuse to start a
+        // second RunAsync while a stale-root rescan is racing the shared ScanService.
+        if (Chart.IsScopeScanning) return;
+
         _scanCts?.Dispose();
         _scanCts = new CancellationTokenSource();
         var token = _scanCts.Token;
 
         SetScanningState(true);
+        Chart.IsRootScanInProgress = true;
         StatusText = $"Scanning {target}...";
         StatusDetails = string.Empty;
         ProgressValue = 0;
@@ -199,6 +218,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             FinishCancelled();
             return;
+        }
+        finally
+        {
+            Chart.IsRootScanInProgress = false;
         }
 
         if (token.IsCancellationRequested) { FinishCancelled(); return; }
@@ -248,6 +271,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             OnPropertyChanged(nameof(DisplayStatusText));
             OnPropertyChanged(nameof(HoverStatusVisible));
+        }
+
+        if (e.PropertyName == nameof(ChartViewModel.IsScopeScanning))
+        {
+            OnPropertyChanged(nameof(IsBusy));
+            ScanDriveCommand.NotifyCanExecuteChanged();
+            BrowseCommand.NotifyCanExecuteChanged();
+            RescanCommand.NotifyCanExecuteChanged();
         }
     }
 

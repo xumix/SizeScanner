@@ -219,4 +219,77 @@ public sealed class MainWindowViewModelTests
         Assert.False(chart.IsScoped);
         Assert.Equal(Humanize.Size(999), vm.InaccessibleTotalSize);
     }
+
+    [Fact]
+    public async Task Toolbar_scan_commands_are_disabled_while_chart_is_scope_scanning()
+    {
+        var scan = new FakeScanService();
+        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+        var vm = CreateVm(root, chart: chart, scan: scan);
+        vm.Initialize();
+        await vm.ScanTargetAsync("C:\\", isDrive: false);
+
+        var dataDir = root.Items![0];
+        var pendingScope = new TaskCompletionSource<FsItem>();
+        scan.PendingScope = pendingScope;
+        var scopeTask = chart.TryScopeAtAsync(dataDir); // sets Chart.IsScopeScanning
+
+        Assert.True(chart.IsScopeScanning);
+        Assert.False(vm.ScanDriveCommand.CanExecute(new DriveItem("C:", "C:\\")));
+        Assert.False(vm.BrowseCommand.CanExecute(null));
+        Assert.False(vm.RescanCommand.CanExecute(null));
+
+        // A stale "Go to root"/"Go up" rescan must not let the toolbar race the shared
+        // ScanService: ScanTargetAsync itself must refuse to call RunAsync while
+        // Chart.IsScopeScanning is true, as a backstop behind the disabled CanExecute above.
+        var rootCallsBefore = scan.RootCalls.Count;
+        await vm.ScanTargetAsync("C:\\", isDrive: false);
+        Assert.Equal(rootCallsBefore, scan.RootCalls.Count);
+
+        pendingScope.SetCanceled();
+        Assert.False(await scopeTask);
+
+        Assert.False(chart.IsScopeScanning);
+        Assert.True(vm.ScanDriveCommand.CanExecute(new DriveItem("C:", "C:\\")));
+        Assert.True(vm.RescanCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task GoToRoot_is_refused_while_a_toolbar_root_scan_is_in_flight()
+    {
+        var scan = new FakeScanService();
+        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+        var vm = CreateVm(root, chart: chart, scan: scan);
+        vm.Initialize();
+        await vm.ScanTargetAsync("C:\\", isDrive: false);
+
+        var dataDir = root.Items![0];
+        var scopedData = TestTree.Dir("Data", TestTree.File("f.bin", 10));
+        scan.ScopeResult = _ => scopedData;
+        await chart.TryScopeAtAsync(dataDir);
+
+        // Mark the cached root stale, so GoToRootAsync must rescan it via _scan.RunAsync
+        // rather than take the cheap "just drop back to the cached tree" path.
+        chart.SetContextTarget(scopedData.Items![0]);
+        await chart.DeleteCommand.ExecuteAsync(null);
+        Assert.True(chart.IsScoped);
+
+        var pendingRoot = new TaskCompletionSource<FsItem>();
+        scan.PendingRoot = pendingRoot;
+        var rescanTask = vm.ScanTargetAsync("C:\\", isDrive: false); // toolbar RunAsync in flight
+
+        Assert.True(chart.IsRootScanInProgress);
+        var rootCallsBefore = scan.RootCalls.Count;
+
+        await chart.GoToRootCommand.ExecuteAsync(null);
+
+        Assert.Equal(rootCallsBefore, scan.RootCalls.Count); // no second, racing RunAsync call
+        Assert.True(chart.IsScoped); // refused: scope state left untouched
+
+        pendingRoot.SetResult(root);
+        await rescanTask;
+        Assert.False(chart.IsRootScanInProgress);
+    }
 }
