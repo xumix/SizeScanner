@@ -117,13 +117,19 @@ public async Task Scope_scan_reports_progress_and_resets_transient_state_on_comp
 
     Assert.True(vm.IsChartScanning);
     Assert.True(vm.IsScopeProgressIndeterminate);
+    var statusChanged = PropertyChangedTestHelper.WaitForAsync(
+        vm,
+        nameof(ChartViewModel.ScopeStatusText));
     scan.ScopeProgress!.Report(new ScanProgress("C:\\Windows\\System32", 100, null, false));
-    await Task.Yield();
+    await statusChanged;
     Assert.Equal("C:\\Windows\\System32", vm.ScopeStatusText);
     Assert.True(vm.IsScopeProgressIndeterminate);
 
+    var progressChanged = PropertyChangedTestHelper.WaitForAsync(
+        vm,
+        nameof(ChartViewModel.IsScopeProgressIndeterminate));
     scan.ScopeProgress.Report(new ScanProgress("C:\\Windows\\System32", 200, 37.5f, false));
-    await Task.Yield();
+    await progressChanged;
     Assert.Equal(37.5, vm.ScopeProgressValue);
     Assert.False(vm.IsScopeProgressIndeterminate);
 
@@ -310,8 +316,11 @@ public async Task Scoped_scan_drives_main_window_progress_presentation()
     Assert.True(vm.DisplayProgressIsIndeterminate);
     Assert.Equal(0, vm.DisplayProgressValue);
 
+    var progressChanged = PropertyChangedTestHelper.WaitForAsync(
+        vm,
+        nameof(MainWindowViewModel.DisplayProgressIsIndeterminate));
     scan.ScopeProgress!.Report(new ScanProgress("C:\\Data", 20, 42f, false));
-    await Task.Yield();
+    await progressChanged;
 
     Assert.False(vm.DisplayProgressIsIndeterminate);
     Assert.Equal(42, vm.DisplayProgressValue);
@@ -333,8 +342,11 @@ public async Task Root_scan_without_percentage_uses_indeterminate_progress()
     var vm = CreateVm(DriveRoot(), scan: scan);
 
     var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+    var statusChanged = PropertyChangedTestHelper.WaitForAsync(
+        vm,
+        nameof(MainWindowViewModel.StatusDetails));
     scan.RootProgress!.Report(new ScanProgress("D:\\data\\child", 100, null, false));
-    await Task.Yield();
+    await statusChanged;
 
     Assert.True(vm.DisplayProgressIsIndeterminate);
     Assert.Equal(0, vm.DisplayProgressValue);
@@ -348,20 +360,22 @@ public async Task Root_scan_without_percentage_uses_indeterminate_progress()
 public async Task Failed_root_scan_clears_busy_progress_state()
 {
     var scan = new FakeScanService();
+    var dialogs = new RecordingDialogs();
     var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
     scan.PendingRoot = pending;
-    var vm = CreateVm(DriveRoot(), scan: scan);
+    var vm = CreateVm(DriveRoot(), scan: scan, dialogs: dialogs);
     var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
 
     pending.SetException(new IOException("boom"));
 
-    await Assert.ThrowsAsync<IOException>(() => scanTask);
+    await scanTask;
     Assert.False(vm.IsBusy);
     Assert.False(vm.Chart.IsChartScanning);
     Assert.False(vm.DisplayProgressIsIndeterminate);
     Assert.Equal(0, vm.DisplayProgressValue);
     Assert.Empty(vm.StatusDetails);
     Assert.Equal("Scan failed", vm.StatusText);
+    Assert.Equal([("Scan failed", "boom")], dialogs.InfoCalls);
 }
 ```
 
@@ -487,10 +501,10 @@ public async Task ScanTargetAsync(string target, bool isDrive)
     {
         StatusText = "Scan cancelled";
     }
-    catch
+    catch (Exception ex)
     {
         StatusText = "Scan failed";
-        throw;
+        await _dialogs.ShowInfoAsync("Scan failed", ex.Message);
     }
     finally
     {
@@ -624,14 +638,15 @@ public sealed class BusySpinnerControl : Control
 
     public BusySpinnerControl()
     {
-        _timer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(50),
-            DispatcherPriority.Render,
-            (_, _) =>
-            {
-                _startAngle = (_startAngle + DegreesPerTick) % 360d;
-                InvalidateVisual();
-            });
+        _timer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+        _timer.Tick += (_, _) =>
+        {
+            _startAngle = (_startAngle + DegreesPerTick) % 360d;
+            InvalidateVisual();
+        };
     }
 
     public bool IsActive

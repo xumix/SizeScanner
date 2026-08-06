@@ -30,14 +30,15 @@ public sealed class BusySpinnerControl : Control
 
     public BusySpinnerControl()
     {
-        _timer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(50),
-            DispatcherPriority.Render,
-            (_, _) =>
-            {
-                _startAngle = (_startAngle + DegreesPerTick) % 360d;
-                InvalidateVisual();
-            });
+        _timer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+        _timer.Tick += (_, _) =>
+        {
+            _startAngle = (_startAngle + DegreesPerTick) % 360d;
+            InvalidateVisual();
+        };
     }
 
     public bool IsActive

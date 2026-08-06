@@ -250,7 +250,7 @@ part of this layout.
   substantial changes.
 - Contains: `plans/` and `specs/`, with date-prefixed Markdown files.
 - Key files: `docs/superpowers/plans/2026-07-16-bounded-streaming-snapshot.md`,
-  `docs/superpowers/specs/2026-08-06-shallow-parallel-fanout-design.md`
+  `docs/superpowers/specs/2026-08-06-scan-progress-spinner-design.md`
 
 **`.vscode/`:**
 - Purpose: Supply repository-local launch and task definitions.

@@ -160,18 +160,26 @@ public sealed class MainWindowViewModelTests
     public async Task CancelScan_cancels_an_active_root_scan()
     {
         var scan = new FakeScanService();
-        var pending = new TaskCompletionSource<FsItem>();
+        var dialogs = new RecordingDialogs();
+        var pending = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingRoot = pending;
-        var vm = CreateVm(DriveRoot(), scan: scan);
+        var vm = CreateVm(DriveRoot(), scan: scan, dialogs: dialogs);
         vm.Initialize();
 
         var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
         vm.CancelScanCommand.Execute(null);
-        pending.SetCanceled();
+        pending.SetCanceled(TestContext.Current.CancellationToken);
         await scanTask;
 
         Assert.False(vm.IsScanning);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.Chart.IsChartScanning);
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+        Assert.Empty(vm.StatusDetails);
         Assert.Equal("Scan cancelled", vm.StatusText);
+        Assert.Empty(dialogs.InfoCalls);
     }
 
     [Fact]
@@ -185,12 +193,13 @@ public sealed class MainWindowViewModelTests
         await vm.ScanTargetAsync("C:\\", isDrive: false);
 
         var dataDir = root.Items![0];
-        var pendingScope = new TaskCompletionSource<FsItem>();
+        var pendingScope = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pendingScope;
         var scopeTask = chart.TryScopeAtAsync(dataDir);
 
         vm.CancelScanCommand.Execute(null);
-        pendingScope.SetCanceled();
+        pendingScope.SetCanceled(TestContext.Current.CancellationToken);
 
         Assert.False(await scopeTask);
         Assert.False(chart.IsScopeScanning);
@@ -249,7 +258,7 @@ public sealed class MainWindowViewModelTests
 
         var progressChanged = PropertyChangedTestHelper.WaitForAsync(
             vm,
-            nameof(MainWindowViewModel.DisplayProgressValue));
+            nameof(MainWindowViewModel.DisplayProgressIsIndeterminate));
         scan.ScopeProgress!.Report(new ScanProgress("C:\\Data", 20, 42f, false));
         await progressChanged;
 
@@ -320,7 +329,8 @@ public sealed class MainWindowViewModelTests
         await vm.ScanTargetAsync("C:\\", isDrive: false);
 
         var dataDir = root.Items![0];
-        var pendingScope = new TaskCompletionSource<FsItem>();
+        var pendingScope = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pendingScope;
         var scopeTask = chart.TryScopeAtAsync(dataDir); // sets Chart.IsScopeScanning
 
@@ -336,7 +346,7 @@ public sealed class MainWindowViewModelTests
         await vm.ScanTargetAsync("C:\\", isDrive: false);
         Assert.Equal(rootCallsBefore, scan.RootCalls.Count);
 
-        pendingScope.SetCanceled();
+        pendingScope.SetCanceled(TestContext.Current.CancellationToken);
         Assert.False(await scopeTask);
 
         Assert.False(chart.IsScopeScanning);
@@ -365,7 +375,8 @@ public sealed class MainWindowViewModelTests
         await chart.DeleteCommand.ExecuteAsync(null);
         Assert.True(chart.IsScoped);
 
-        var pendingRoot = new TaskCompletionSource<FsItem>();
+        var pendingRoot = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingRoot = pendingRoot;
         var rescanTask = vm.ScanTargetAsync("C:\\", isDrive: false); // toolbar RunAsync in flight
 
