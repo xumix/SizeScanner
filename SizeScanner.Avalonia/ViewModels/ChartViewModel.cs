@@ -49,9 +49,12 @@ public sealed partial class ChartViewModel : ViewModelBase
     /// <see cref="IScanService.RunAsync"/>. A stale "Go to root"/"Go up" rescan also calls
     /// RunAsync, and the two are not mutually exclusive via <see cref="IsScopeScanning"/> alone
     /// (that flag only guards against a second scope-side rescan), so this flag lets the chart
-    /// refuse to race the toolbar for the same non-thread-safe <c>DriveScanner</c>.
+    /// refuse to race the toolbar for the same non-thread-safe <c>DriveScanner</c>. It also
+    /// contributes to <see cref="IsChartScanning"/>, the chart's unified visual busy state.
     /// </summary>
-    public bool IsRootScanInProgress { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsChartScanning))]
+    private bool _isRootScanInProgress;
 
     [ObservableProperty] private SunburstChart _layout = new([], 0, 0, 0);
     [ObservableProperty] private bool _isScoped;
@@ -60,8 +63,21 @@ public sealed partial class ChartViewModel : ViewModelBase
     [ObservableProperty] private string _hoverToolTip = string.Empty;
     [ObservableProperty] private bool _isDeleting;
     [ObservableProperty] private string _deleteStatusText = string.Empty;
-    [ObservableProperty] private bool _isScopeScanning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsChartScanning))]
+    private bool _isScopeScanning;
+
     [ObservableProperty] private string _scopeStatusText = string.Empty;
+    [ObservableProperty] private double _scopeProgressValue;
+    [ObservableProperty] private bool _isScopeProgressIndeterminate;
+
+    /// <summary>
+    /// True while either a toolbar-initiated root scan or a chart-initiated scope scan is
+    /// running, so the chart can show a single unified busy/spinner state regardless of which
+    /// scan triggered it.
+    /// </summary>
+    public bool IsChartScanning => IsRootScanInProgress || IsScopeScanning;
 
     public FsItem? ContextTarget { get; private set; }
     public string ContextTargetPath { get; private set; } = string.Empty;
@@ -121,7 +137,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     public void CancelScopeScan() => _scopeCts?.Cancel();
 
     public Task<bool> TryScopeAtAsync(FsItem node) =>
-        !CanScopeTo(node) || IsScopeScanning
+        !CanScopeTo(node) || IsScopeScanning || IsRootScanInProgress
             ? Task.FromResult(false)
             : ScopeToPathAsync(BuildFullPath(AncestorChain(node)));
 
@@ -144,6 +160,20 @@ public sealed partial class ChartViewModel : ViewModelBase
         return true;
     }
 
+    private void OnScopeScanProgress(ScanProgress progress)
+    {
+        ScopeStatusText = progress.CurrentPath;
+        if (progress.PercentComplete.HasValue)
+        {
+            ScopeProgressValue = Math.Min(progress.PercentComplete.Value, 100);
+            IsScopeProgressIndeterminate = false;
+        }
+        else
+        {
+            IsScopeProgressIndeterminate = true;
+        }
+    }
+
     /// <summary>
     /// Runs one chart-initiated scan under the cancellation, status-text, and error handling
     /// shared by scoping, "Go up", and a stale-root refresh. Returns null when the scan was
@@ -155,12 +185,15 @@ public sealed partial class ChartViewModel : ViewModelBase
     {
         using var cts = new CancellationTokenSource();
         _scopeCts = cts;
+        ScopeProgressValue = 0;
+        IsScopeProgressIndeterminate = true;
+        ScopeStatusText = string.Empty;
         IsScopeScanning = true;
         try
         {
             return await scan(
                 cts.Token,
-                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath));
+                new Progress<ScanProgress>(OnScopeScanProgress));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
@@ -175,6 +208,8 @@ public sealed partial class ChartViewModel : ViewModelBase
         {
             _scopeCts = null;
             IsScopeScanning = false;
+            ScopeProgressValue = 0;
+            IsScopeProgressIndeterminate = false;
             ScopeStatusText = string.Empty;
         }
     }

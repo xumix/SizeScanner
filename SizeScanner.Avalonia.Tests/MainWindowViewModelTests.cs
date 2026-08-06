@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -45,23 +47,31 @@ public sealed class MainWindowViewModelTests
             Task.FromResult(new DeleteResult(true, null));
     }
 
-    private sealed class NoopDialogs : IDialogService
+    private sealed class RecordingDialogs : IDialogService
     {
+        public System.Collections.Generic.List<(string Title, string Message)> InfoCalls { get; } = [];
+
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
-        public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+        public Task ShowInfoAsync(string title, string message)
+        {
+            InfoCalls.Add((title, message));
+            return Task.CompletedTask;
+        }
     }
 
     private static MainWindowViewModel CreateVm(
         FsItem root,
         FakeSettings? settings = null,
         ChartViewModel? chart = null,
-        FakeScanService? scan = null)
+        FakeScanService? scan = null,
+        RecordingDialogs? dialogs = null)
     {
         scan ??= new FakeScanService();
+        dialogs ??= new RecordingDialogs();
         scan.RootResult ??= (_, _) => root;
-        chart ??= new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        chart ??= new ChartViewModel(scan, new NoopFs(), dialogs);
         return new(scan, settings ?? new FakeSettings(), new FakeDrives(),
-            new FakeElevation(), new FakeFolderPicker(), chart);
+            new FakeElevation(), new FakeFolderPicker(), dialogs, chart);
     }
 
     private static FsItem DriveRoot() =>
@@ -133,7 +143,7 @@ public sealed class MainWindowViewModelTests
     [Fact]
     public void DisplayStatusText_uses_chart_delete_status_while_deleting()
     {
-        var chart = new ChartViewModel(new FakeScanService(), new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(new FakeScanService(), new NoopFs(), new RecordingDialogs());
         var vm = CreateVm(DriveRoot(), chart: chart);
 
         chart.DeleteStatusText = "Moving to Recycle Bin: C:\\page.sys";
@@ -150,37 +160,46 @@ public sealed class MainWindowViewModelTests
     public async Task CancelScan_cancels_an_active_root_scan()
     {
         var scan = new FakeScanService();
-        var pending = new TaskCompletionSource<FsItem>();
+        var dialogs = new RecordingDialogs();
+        var pending = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingRoot = pending;
-        var vm = CreateVm(DriveRoot(), scan: scan);
+        var vm = CreateVm(DriveRoot(), scan: scan, dialogs: dialogs);
         vm.Initialize();
 
         var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
         vm.CancelScanCommand.Execute(null);
-        pending.SetCanceled();
+        pending.SetCanceled(TestContext.Current.CancellationToken);
         await scanTask;
 
         Assert.False(vm.IsScanning);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.Chart.IsChartScanning);
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+        Assert.Empty(vm.StatusDetails);
         Assert.Equal("Scan cancelled", vm.StatusText);
+        Assert.Empty(dialogs.InfoCalls);
     }
 
     [Fact]
     public async Task CancelScan_cancels_the_chart_scope_scan_when_no_root_scan_is_active()
     {
         var scan = new FakeScanService();
-        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(scan, new NoopFs(), new RecordingDialogs());
         var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
         var vm = CreateVm(root, chart: chart, scan: scan);
         vm.Initialize();
         await vm.ScanTargetAsync("C:\\", isDrive: false);
 
         var dataDir = root.Items![0];
-        var pendingScope = new TaskCompletionSource<FsItem>();
+        var pendingScope = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pendingScope;
         var scopeTask = chart.TryScopeAtAsync(dataDir);
 
         vm.CancelScanCommand.Execute(null);
-        pendingScope.SetCanceled();
+        pendingScope.SetCanceled(TestContext.Current.CancellationToken);
 
         Assert.False(await scopeTask);
         Assert.False(chart.IsScopeScanning);
@@ -190,7 +209,7 @@ public sealed class MainWindowViewModelTests
     public async Task RootRescanned_from_chart_replaces_scan_root_and_refreshes_inaccessible_pane()
     {
         var scan = new FakeScanService();
-        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(scan, new NoopFs(), new RecordingDialogs());
         var root = TestTree.Dir("C:\\",
             TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
             TestTree.File(DriveScanMetadata.InaccessibleName, 50),
@@ -221,17 +240,97 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task Scoped_scan_drives_main_window_progress_presentation()
+    {
+        var scan = new FakeScanService();
+        var chart = new ChartViewModel(scan, new NoopFs(), new RecordingDialogs());
+        var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+        var vm = CreateVm(root, chart: chart, scan: scan);
+        await vm.ScanTargetAsync("C:\\", isDrive: false);
+        var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingScope = pending;
+
+        var scopeTask = chart.TryScopeAtAsync(root.Items![0]);
+
+        Assert.True(vm.IsBusy);
+        Assert.True(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+
+        var progressChanged = PropertyChangedTestHelper.WaitForAsync(
+            vm,
+            nameof(MainWindowViewModel.DisplayProgressIsIndeterminate));
+        scan.ScopeProgress!.Report(new ScanProgress("C:\\Data", 20, 42f, false));
+        await progressChanged;
+
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(42, vm.DisplayProgressValue);
+        Assert.Contains("C:\\Data", vm.DisplayStatusText);
+
+        pending.SetResult(TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+        Assert.True(await scopeTask);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+    }
+
+    [Fact]
+    public async Task Root_scan_without_percentage_uses_indeterminate_progress()
+    {
+        var scan = new FakeScanService();
+        var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingRoot = pending;
+        var vm = CreateVm(DriveRoot(), scan: scan);
+
+        var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+        var statusChanged = PropertyChangedTestHelper.WaitForAsync(
+            vm,
+            nameof(MainWindowViewModel.StatusDetails));
+        scan.RootProgress!.Report(new ScanProgress("D:\\data\\child", 100, null, false));
+        await statusChanged;
+
+        Assert.True(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+
+        pending.SetResult(DriveRoot());
+        await scanTask;
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+    }
+
+    [Fact]
+    public async Task Failed_root_scan_clears_busy_progress_state()
+    {
+        var scan = new FakeScanService();
+        var dialogs = new RecordingDialogs();
+        var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingRoot = pending;
+        var vm = CreateVm(DriveRoot(), scan: scan, dialogs: dialogs);
+        var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+
+        pending.SetException(new IOException("boom"));
+
+        await scanTask;
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.Chart.IsChartScanning);
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+        Assert.Empty(vm.StatusDetails);
+        Assert.Equal("Scan failed", vm.StatusText);
+        Assert.Equal([("Scan failed", "boom")], dialogs.InfoCalls);
+    }
+
+    [Fact]
     public async Task Toolbar_scan_commands_are_disabled_while_chart_is_scope_scanning()
     {
         var scan = new FakeScanService();
-        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(scan, new NoopFs(), new RecordingDialogs());
         var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
         var vm = CreateVm(root, chart: chart, scan: scan);
         vm.Initialize();
         await vm.ScanTargetAsync("C:\\", isDrive: false);
 
         var dataDir = root.Items![0];
-        var pendingScope = new TaskCompletionSource<FsItem>();
+        var pendingScope = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pendingScope;
         var scopeTask = chart.TryScopeAtAsync(dataDir); // sets Chart.IsScopeScanning
 
@@ -247,7 +346,7 @@ public sealed class MainWindowViewModelTests
         await vm.ScanTargetAsync("C:\\", isDrive: false);
         Assert.Equal(rootCallsBefore, scan.RootCalls.Count);
 
-        pendingScope.SetCanceled();
+        pendingScope.SetCanceled(TestContext.Current.CancellationToken);
         Assert.False(await scopeTask);
 
         Assert.False(chart.IsScopeScanning);
@@ -259,7 +358,7 @@ public sealed class MainWindowViewModelTests
     public async Task GoToRoot_is_refused_while_a_toolbar_root_scan_is_in_flight()
     {
         var scan = new FakeScanService();
-        var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+        var chart = new ChartViewModel(scan, new NoopFs(), new RecordingDialogs());
         var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
         var vm = CreateVm(root, chart: chart, scan: scan);
         vm.Initialize();
@@ -276,7 +375,8 @@ public sealed class MainWindowViewModelTests
         await chart.DeleteCommand.ExecuteAsync(null);
         Assert.True(chart.IsScoped);
 
-        var pendingRoot = new TaskCompletionSource<FsItem>();
+        var pendingRoot = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingRoot = pendingRoot;
         var rescanTask = vm.ScanTargetAsync("C:\\", isDrive: false); // toolbar RunAsync in flight
 
