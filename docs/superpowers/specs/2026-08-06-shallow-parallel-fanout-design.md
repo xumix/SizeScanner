@@ -38,10 +38,12 @@ Full work-stealing (workers pushing every newly discovered subdirectory onto a s
 
 **Depth-limited fan-out under one shared slot budget, async through the fan-out levels only.**
 
-- A directory fans its children out iff `depth < ParallelFanOutLevels`. Default `2` — the root and its immediate children.
+- A directory fans its children out iff `depth < ParallelFanOutLevels`. **Shipped default `1` — root only** (locked by measurement and human ruling; see [Measured results](#measured-results)). `2` and `3` remain available as explicit, tested knobs — not defaults.
 - Everything at or below that depth walks its whole subtree synchronously on a single slot, exactly as today.
 - One `SemaphoreSlim(MaxDegreeOfParallelism)` for the entire scan. A slot is held only around a native read or around a sequential subtree walk, **never across a wait for children**.
 - Children are scheduled in a bounded window as batches are read, so subdirectory names are never fully materialized.
+
+Example at an explicit `ParallelFanOutLevels = 2` (illustrates the general depth-limited mechanism; **not** the shipped default):
 
 ```text
 ParallelFanOutLevels = 2
@@ -54,7 +56,7 @@ C:\                     depth 0  < 2  → fan out children
     Alice\              depth 2 !< 2  → whole subtree on one slot
 ```
 
-`ParallelFanOutLevels = 1` reproduces today's root-only behavior; `0` is fully sequential. The volume policy simply forces `0`.
+`ParallelFanOutLevels = 1` — root only — **is the shipped default**; it reproduces today's (pre-branch) root-only behavior. `0` is fully sequential, and is what the volume policy forces on non-SSD-class volumes.
 
 ---
 
@@ -78,7 +80,7 @@ Three methods replace the `parallelizeChildren` boolean:
 | `WalkSequentialUnderSlot` | sync | Today's `WalkDirectory`/`WalkChildrenSequentially`, unchanged semantics |
 | `WalkFanOutAsync` | async | Batch-reads under a slot, schedules children in a bounded window, folds results |
 
-Async state machines therefore exist only at the top `ParallelFanOutLevels` levels (default two). The deep hot path stays synchronous and allocation-free.
+Async state machines therefore exist only at the top `ParallelFanOutLevels` levels (default one — root only; shipped value after measurement, see [Measured results](#measured-results)). The deep hot path stays synchronous and allocation-free.
 
 ### Slot discipline (this is the deadlock proof)
 
@@ -109,7 +111,7 @@ Rent from `ArrayPool<byte>.Shared` **after** acquiring a slot and return **befor
 ### Handles
 
 A fan-out parent keeps its cursor open across awaits, so open cursors are bounded by
-`1 + (levels − 1) × window + degree` — roughly 50 handles at DOP 16, levels 2. This is stated rather than asserted; the concurrency assertion targets `ReadNext`.
+`1 + (levels − 1) × window + degree` — roughly 50 handles at DOP 16, levels 2 (an illustrative example at an explicit non-default level; the shipped default is `levels = 1`, which reduces this to `1 + degree`). This is stated rather than asserted; the concurrency assertion targets `ReadNext`.
 
 ### Collector ownership
 
@@ -136,10 +138,10 @@ Retention is unaffected by scheduling: `BoundedChildCollector` ranks by size the
 
 | Property | Default | Meaning |
 |----------|---------|---------|
-| `MaxDegreeOfParallelism` | `Math.Min(Environment.ProcessorCount, 16)` (confirm by measurement) | Shared slots for concurrent native reads and sequential subtrees |
-| `ParallelFanOutLevels` | `2` | Number of levels that fan out: `0` sequential, `1` root only (today), `2` root + one level |
+| `MaxDegreeOfParallelism` | `0`, which resolves automatically to `Math.Min(Environment.ProcessorCount, 16)` (confirmed correct by measurement, see [Measured results](#measured-results)) | Shared slots for concurrent native reads and sequential subtrees |
+| `ParallelFanOutLevels` | `1` — root only (shipped default, locked by measurement and human ruling) | Number of levels that fan out: `0` sequential, `1` root only (today's behavior, **shipped default**), `2`/`3` deeper fan-out — available explicitly, not defaults |
 
-Validation: `maxDegreeOfParallelism >= 1`, `parallelFanOutLevels >= 0`. No negative sentinel.
+Validation: `maxDegreeOfParallelism >= 0` (zero selects the automatic `Math.Min(Environment.ProcessorCount, 16)` degree; any positive value is used as-is) and `parallelFanOutLevels >= 0`. Negative values for either parameter are rejected with `ArgumentOutOfRangeException`; there is no negative sentinel for any other meaning.
 
 Because the DOP default now depends on the machine, **every concurrency test must pass an explicit budget**; a two-core CI agent would otherwise make parallel assertions vacuous.
 
@@ -233,7 +235,7 @@ No Avalonia, chart, `DirectoryScanner`, or `FsItem` changes.
 | Question | Decision |
 |----------|----------|
 | Success bar | Option B — close most of the gap, not full parity |
-| Knob shape | `ParallelFanOutLevels` count, default `2`; no negative sentinel |
+| Knob shape | `ParallelFanOutLevels` count, **shipped default `1`** (locked by measurement and human ruling — see [Measured results](#measured-results)); `2`/`3` remain available as explicit knobs, not defaults; no negative sentinel |
 | Concurrency model | Async through fan-out levels; single blocking boundary in `Scan` |
 | Deadlock avoidance | Slot never held across a child wait |
 | Nested pools | Forbidden — one `SemaphoreSlim` per scan |
