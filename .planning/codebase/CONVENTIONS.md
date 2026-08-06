@@ -68,7 +68,7 @@
 - Catch broad exceptions only at deliberate resilience boundaries: elevation detection in `ScannerCore/DriveScanner.cs`, settings loading in `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`, engine fallback in `ScannerCore/ScanEngineSelector.cs`, and user-facing chart scans in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
 - Preserve cleanup with `using`, `using var`, and `finally`. Examples include pooled-buffer return in `ScannerCore.Tests/DirectoryScannerParsingTests.cs` and scan-state restoration in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`.
 - Do not silently swallow unexpected errors in core algorithms. `ScannerCore/BoundedDirectoryWalker.cs` records worker failures and rethrows them after cleanup; `ScannerCore/ScanEngineSelector.cs` only suppresses a failure when another capable engine can be tried.
-- Keep failure messages near the boundary that can act on them: debug diagnostics in core, `DeleteResult.Error` in filesystem services, and dialogs in the chart view-model.
+- Keep failure messages near the boundary that can act on them: debug diagnostics in core, `DeleteResult.Error` in filesystem services, and `IDialogService` dialogs in both root- and scoped-scan view-model workflows.
 
 ## Logging
 
@@ -77,7 +77,7 @@
 **Patterns:**
 - Use `Debug.WriteLine` for low-level scanner diagnostics and fallback information in `ScannerCore/DirectoryScanner.cs` and `ScannerCore/ScanEngineSelector.cs`.
 - Avalonia startup routes framework messages to trace with `.LogToTrace()` in `SizeScanner.Avalonia/Program.cs`.
-- Surface actionable UI failures through `IDialogService` rather than writing to the console, as in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
+- Surface actionable UI failures through `IDialogService` rather than writing to the console, as in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` and `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
 - Use `ITestOutputHelper` or `Console.WriteLine` only for opt-in performance diagnostics in `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs` and `ScannerCore.Tests/BoundedScanMemoryTests.cs`.
 - Do not add ad hoc console output to production services; `ScannerConsole/Program.cs` is the dedicated manual harness.
 

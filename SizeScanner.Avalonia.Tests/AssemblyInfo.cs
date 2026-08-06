@@ -8,6 +8,7 @@ using Xunit;
 // ItemsCollection). Running test classes in parallel worker threads makes that pinning
 // racy: any Avalonia-touching test on a different thread than the one that first claimed
 // the Dispatcher fails with "the calling thread cannot access this object because a
-// different thread owns it". Serializing test execution keeps every test on one thread,
-// which is required for BusySpinnerControlTests and ViewLocatorTests to coexist reliably.
+// different thread owns it". Disabling parallelization limits concurrent tests as defense
+// in depth, but does not guarantee physical thread identity; AvaloniaUiThread provides that
+// guarantee for tests that construct Avalonia objects.
 [assembly: CollectionBehavior(DisableTestParallelization = true, MaxParallelThreads = 1)]

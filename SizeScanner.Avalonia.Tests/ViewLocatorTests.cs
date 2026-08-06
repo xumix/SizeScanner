@@ -82,10 +82,14 @@ public sealed class ViewLocatorTests
             var overlay = view.FindControl<Grid>("PART_ScanOverlay")!;
             var spinner = view.FindControl<BusySpinnerControl>("PART_ScanSpinner")!;
             var chart = view.FindControl<SunburstChartControl>("PART_Chart")!;
+            var goUp = view.FindControl<Button>("PART_GoUpButton")!;
+            var goToRoot = view.FindControl<Button>("PART_GoToRootButton")!;
 
             Assert.False(overlay.IsVisible);
             Assert.False(spinner.IsActive);
             Assert.True(chart.IsEnabled);
+            Assert.True(goUp.IsEnabled);
+            Assert.True(goToRoot.IsEnabled);
 
             vm.IsRootScanInProgress = true;
 
@@ -96,12 +100,40 @@ public sealed class ViewLocatorTests
             // cannot race a concurrent scan; Avalonia routes neither pointer nor
             // keyboard/context input to disabled elements.
             Assert.False(chart.IsEnabled);
+            Assert.False(goUp.IsEnabled);
+            Assert.False(goToRoot.IsEnabled);
 
             vm.IsRootScanInProgress = false;
 
             Assert.False(overlay.IsVisible);
             Assert.False(spinner.IsActive);
             Assert.True(chart.IsEnabled);
+            Assert.True(goUp.IsEnabled);
+            Assert.True(goToRoot.IsEnabled);
+        });
+
+    [Fact]
+    public void ChartView_scan_start_clears_hovered_segment_and_tooltip() =>
+        AvaloniaUiThread.Invoke(() =>
+        {
+            var vm = CreateChartViewModel();
+            var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+            vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+            vm.Refresh(0f, includeFreeSpace: false);
+            var data = root.Items![0];
+            var segment = Assert.Single(vm.Layout.Segments, item => ReferenceEquals(item.Node, data));
+            var view = new ChartView { DataContext = vm };
+            var chart = view.FindControl<SunburstChartControl>("PART_Chart")!;
+            chart.HoveredSegment = segment;
+            vm.Hover(data);
+            ToolTip.SetIsOpen(chart, true);
+
+            vm.IsRootScanInProgress = true;
+
+            Assert.Empty(vm.HoverPath);
+            Assert.Empty(vm.HoverToolTip);
+            Assert.Null(chart.HoveredSegment);
+            Assert.False(ToolTip.GetIsOpen(chart));
         });
 
     private sealed class UnregisteredViewModel : ViewModelBase;

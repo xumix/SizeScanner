@@ -168,8 +168,9 @@ part of this layout.
   translation, hit-test plumbing, and rendering. Put business policy in
   view-models or chart rules. `SizeScanner.Avalonia/Views/ChartView.axaml` is
   the sole owner of the scan-busy overlay (dimming border, pointer/keyboard
-  blocking, and `BusySpinnerControl` composition) bound to
-  `ChartViewModel.IsChartScanning`.
+  blocking, disabled scope navigation, and `BusySpinnerControl` composition)
+  bound to `ChartViewModel.IsChartScanning`; its code-behind clears visual hover
+  and tooltip state when that scan state becomes active.
 
 **`SizeScanner.Avalonia/Charting/`:**
 - Purpose: Convert scan trees into a bounded sunburst display model and provide
@@ -212,6 +213,7 @@ part of this layout.
   `SizeScanner.Avalonia.Tests/BusySpinnerControlTests.cs`,
   `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs`,
   `SizeScanner.Avalonia.Tests/AvaloniaUiThread.cs`,
+  `SizeScanner.Avalonia.Tests/PropertyChangedTestHelper.cs`,
   `SizeScanner.Avalonia.Tests/FakeScanService.cs`,
   `SizeScanner.Avalonia.Tests/TestTree.cs`
 - Placement rule: Mirror the production type name with a `Tests` suffix and

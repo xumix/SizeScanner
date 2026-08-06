@@ -11,8 +11,14 @@
                 IsVisible="{Binding IsScoped}"
                 Padding="8,6">
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="Go up" Command="{Binding GoUpCommand}" />
-                <Button Content="Go to root" Command="{Binding GoToRootCommand}" />
+                <Button x:Name="PART_GoUpButton"
+                        Content="Go up"
+                        Command="{Binding GoUpCommand}"
+                        IsEnabled="{Binding !IsChartScanning}" />
+                <Button x:Name="PART_GoToRootButton"
+                        Content="Go to root"
+                        Command="{Binding GoToRootCommand}"
+                        IsEnabled="{Binding !IsChartScanning}" />
                 <TextBlock Text="{Binding ScopeLabel}" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" />
             </StackPanel>
@@ -53,9 +59,7 @@
                                           VerticalAlignment="Center"
                                           IsActive="{Binding IsChartScanning}"
                                           TrackBrush="{DynamicResource SystemControlForegroundChromeDisabledLowBrush}"
-                                          IndicatorBrush="{DynamicResource SystemControlForegroundBaseHighBrush}"
-                                          AutomationProperties.Name="Scanning"
-                                          AutomationProperties.LiveSetting="Polite" />
+                                          IndicatorBrush="{DynamicResource SystemControlForegroundBaseHighBrush}" />
             </Grid>
         </Grid>
     </Grid>

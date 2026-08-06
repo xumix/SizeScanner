@@ -26,6 +26,7 @@ namespace SizeScanner.Avalonia.Tests;
 /// </remarks>
 internal static class AvaloniaUiThread
 {
+    private static readonly TimeSpan InvokeTimeout = TimeSpan.FromSeconds(30);
     private static readonly BlockingCollection<Action> Queue = new();
 
     static AvaloniaUiThread()
@@ -52,7 +53,7 @@ internal static class AvaloniaUiThread
     {
         var result = default(T);
         ExceptionDispatchInfo? error = null;
-        using var completed = new ManualResetEventSlim(false);
+        var completed = new ManualResetEventSlim(false);
 
         Queue.Add(() =>
         {
@@ -70,7 +71,13 @@ internal static class AvaloniaUiThread
             }
         });
 
-        completed.Wait();
+        if (!completed.Wait(InvokeTimeout))
+        {
+            throw new TimeoutException(
+                "Timed out after 30 seconds waiting for the AvaloniaUiThread pump to execute the queued action.");
+        }
+
+        completed.Dispose();
         error?.Throw();
         return result!;
     }

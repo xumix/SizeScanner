@@ -55,7 +55,7 @@ part of the production UI.
 | Desktop bootstrap | Starts the STA Avalonia desktop lifetime | `SizeScanner.Avalonia/Program.cs` |
 | Composition root | Registers singleton application services, view-models, and the main window | `SizeScanner.Avalonia/App.axaml.cs` |
 | Main window | Hosts toolbar, chart, progress/status, and inaccessible-path pane; binds unified toolbar progress/Cancel visibility to `MainWindowViewModel`'s display properties regardless of whether a root or chart-initiated scoped scan is active | `SizeScanner.Avalonia/Views/MainWindow.axaml` |
-| Main orchestration VM | Owns root scan commands, cancellation, progress, settings snapshot, drives, inaccessible-path display, and unified toolbar progress presentation (`DisplayProgressValue`, `DisplayProgressIsIndeterminate`, `IsBusy`) that selects between root and chart-owned scoped scan state | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
+| Main orchestration VM | Owns root scan commands, cancellation, progress, root-scan failure dialogs, settings snapshot, drives, inaccessible-path display, and unified toolbar progress presentation (`DisplayProgressValue`, `DisplayProgressIsIndeterminate`, `IsBusy`) that selects between root and chart-owned scoped scan state | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
 | Chart interaction VM | Owns chart scope, layout, hover/context state, scoped rescans, deletion workflows, scoped scan progress, and the unified `IsChartScanning` busy flag that drives the chart's pointer-blocking scan overlay | `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` |
 | Scan adapter | Moves synchronous core scans off the UI thread and distinguishes root state from throwaway scope scans | `SizeScanner.Avalonia/Services/ScanService.cs` |
 | Chart builder | Converts an `FsItem` tree into capped, filtered, ring-indexed sunburst segments | `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` |
@@ -121,8 +121,10 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
 - Rule: Keep scan, filesystem, and context-menu policy out of views. Delegate
   policy to view-models and `ChartNodeRules`. `ChartView.axaml` owns the unified
   scan-overlay presentation (dimming, hit-test blocking, spinner, and disabling
-  the chart control) bound entirely to `ChartViewModel.IsChartScanning`; it adds
-  no scan-state ownership of its own.
+  the chart and scope-navigation controls) bound entirely to
+  `ChartViewModel.IsChartScanning`; when scanning begins, code-behind clears the
+  visual hovered segment and closes the tooltip while `ChartViewModel.ClearHover`
+  remains the owner of hover policy/state.
 
 **View-Models:**
 - Purpose: Hold observable UI state, commands, cancellation ownership, and
@@ -513,9 +515,11 @@ at the application boundary.
   `ScanEngineSelector` can try a fallback engine
   (`ScannerCore/BoundedDirectoryWalker.cs`,
   `ScannerCore/ScanEngineSelector.cs`).
-- Scoped scan exceptions are displayed through `IDialogService`, while the
-  current chart remains unchanged
-  (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`).
+- Root and scoped scan exceptions are displayed through `IDialogService` and
+  swallowed at their UI workflow boundary after setting failure status; `finally`
+  restores transient busy/progress state, and the current chart remains unchanged
+  (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`,
+  `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`).
 - File deletion catches exceptions in the Windows adapter and returns
   `DeleteResult`; the view-model displays the error
   (`SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`).

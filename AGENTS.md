@@ -75,6 +75,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 - Filter threshold: use `FilterThreshold.PercentFromIndex()` and `FilterThreshold.GetDisplayTotal()`; do not duplicate the `0.0025f × FilterIndex` factor.
 - Settings are loaded into `MainWindowViewModel` once and persisted through its in-memory `UserSettings` snapshot; views should not independently load settings.
 - `ChartViewModel` owns scope, hover, context target, and delete commands; views should delegate policy decisions such as context-menu suppression to the VM/chart rules.
+- Root and scoped scan failures are recoverable UI outcomes: show them through the injected `IDialogService`, retain the previous chart, and restore transient busy/progress state from `finally`.
 
 ## Key files
 

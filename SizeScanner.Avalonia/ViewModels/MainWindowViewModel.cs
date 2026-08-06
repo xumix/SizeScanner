@@ -26,6 +26,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly IDriveProvider _driveProvider;
     private readonly IElevationService _elevation;
     private readonly IFolderPicker _folderPicker;
+    private readonly IDialogService _dialogs;
     private readonly UserSettings _settings;
 
     private FsItem? _scanRoot;
@@ -39,6 +40,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         IDriveProvider driveProvider,
         IElevationService elevation,
         IFolderPicker folderPicker,
+        IDialogService dialogs,
         ChartViewModel chart)
     {
         _scan = scan;
@@ -46,6 +48,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _driveProvider = driveProvider;
         _elevation = elevation;
         _folderPicker = folderPicker;
+        _dialogs = dialogs;
         Chart = chart;
         Chart.PropertyChanged += OnChartPropertyChanged;
         Chart.RootRescanned += OnChartRootRescanned;
@@ -220,7 +223,6 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         // ScanService.
         if (IsBusy) return;
 
-        _scanCts?.Dispose();
         var cts = new CancellationTokenSource();
         _scanCts = cts;
         var token = cts.Token;
@@ -251,10 +253,12 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             StatusText = "Scan cancelled";
         }
-        catch
+        // An OperationCanceledException for any other token is an unexpected scan failure,
+        // not cancellation owned by this root workflow.
+        catch (Exception ex)
         {
             StatusText = "Scan failed";
-            throw;
+            await _dialogs.ShowInfoAsync("Scan failed", ex.Message);
         }
         finally
         {

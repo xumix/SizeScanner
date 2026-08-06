@@ -137,7 +137,7 @@ public sealed partial class ChartViewModel : ViewModelBase
     public void CancelScopeScan() => _scopeCts?.Cancel();
 
     public Task<bool> TryScopeAtAsync(FsItem node) =>
-        !CanScopeTo(node) || IsScopeScanning
+        !CanScopeTo(node) || IsScopeScanning || IsRootScanInProgress
             ? Task.FromResult(false)
             : ScopeToPathAsync(BuildFullPath(AncestorChain(node)));
 
