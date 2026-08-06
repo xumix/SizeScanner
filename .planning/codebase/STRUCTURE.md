@@ -97,7 +97,7 @@ part of this layout.
 **`ScannerCore.Tests/`:**
 - Purpose: Verify `ScannerCore/` behavior, including native record parsing,
   bounded retention, memory behavior, cancellation, error/fallback behavior, and
-  SSD-gated top-level parallelism.
+  SSD-gated depth-limited fan-out.
 - Contains: Flat xUnit test classes and internal test doubles/fixtures.
 - Key files: `ScannerCore.Tests/DirectoryScannerParsingTests.cs`,
   `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs`,
@@ -282,7 +282,7 @@ part of this layout.
 - `ScannerCore/BoundedDirectoryWalker.cs`: Post-order exact-total traversal.
 - `ScannerCore/BoundedChildCollector.cs`: Largest-child retention and aggregate
   creation.
-- `ScannerCore/ScanTreeBudget.cs`: Retention and worker limits.
+- `ScannerCore/ScanTreeBudget.cs`: Retention, fan-out depth, and shared parallelism limits.
 - `ScannerCore/FsItem.cs`: Shared scan tree model.
 - `ScannerCore/DriveScanMetadata.cs`: Core synthetic drive entries.
 - `ScannerCore/VolumeParallelismPolicy.cs`: SSD/NVMe parallelism gate.

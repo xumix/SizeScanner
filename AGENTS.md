@@ -28,7 +28,7 @@ Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions li
 - **Size mode**: drive scans use allocation size, directory scans use logical file size; `isDriveScan` flows from `DriveScanner` into `DirectoryScanner`'s `preferAllocatedSize` (allocation size vs `EndOfFile`).
 - **Progress**: `IProgress<ScanProgress>` callbacks from `DriveScanner` (throttled to 300 ms). UI wires `Progress<ScanProgress>` to the status bar and progress bar.
 - **Cancellation**: Both `ScanDrive` and `ScanDirectory` accept `CancellationToken`.
-- **Parallelism**: only top-level directory fan-out is parallel, and only when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe). HDDs and unknown volumes stay sequential.
+- **Parallelism**: directories fan their children out across a scan-wide slot budget for the first `ScanTreeBudget.ParallelFanOutLevels` levels — default `1` (root only); deeper subtrees walk their whole tree sequentially on one shared slot. `2` and `3` remain explicit, measured knobs, not defaults. `MaxDegreeOfParallelism` (default `0`, resolving to `Math.Min(Environment.ProcessorCount, 16)`) caps concurrent native reads and outstanding 1 MiB buffer rentals, not open-cursor count — a parent cursor can stay open across an awaited child. Fan-out only happens when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe); HDDs and unknown volumes stay sequential.
 
 ## Build & run
 
@@ -78,7 +78,7 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 ## Key files
 
 - `ScannerCore/DirectoryScanner.cs` — symlink/offline handling, native enumeration
-- `ScannerCore/DirectoryWalkEngine.cs` — scan tree walk, SSD-only top-level parallelism
+- `ScannerCore/DirectoryWalkEngine.cs` — scan tree walk, SSD-gated depth-limited fan-out under a shared slot budget
 - `ScannerCore/VolumeParallelismPolicy.cs` — P/Invoke seek-penalty detection gating parallelism
 - `ScannerCore/DriveScanner.cs` — scan orchestration, progress, inaccessible tracking
 - `ScannerCore/DriveScanMetadata.cs` — synthetic drive scan entry names/accessors/insertion

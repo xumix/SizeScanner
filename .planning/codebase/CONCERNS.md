@@ -94,12 +94,6 @@
 
 ## Performance Bottlenecks
 
-**Parallel root fan-out materializes every child-directory name:**
-- Problem: The parallel path reads the entire root directory into `List<string> directoryNames` before any bounded channel fan-out begins.
-- Files: `ScannerCore/BoundedDirectoryWalker.cs`
-- Cause: `WalkChildrenInParallel` separates enumeration from worker dispatch instead of streaming names directly into the bounded work channel.
-- Improvement path: Feed names to the channel while enumerating, retain only channel capacity plus active work, and add a parallel million-directory allocation test.
-
 **Traversal depth is recursive and not bounded by retained depth:**
 - Problem: `MaxRetainedDepth` limits the returned object graph, but the scanner still recursively calls `WalkDirectory` for every physical directory level to compute exact totals. A sufficiently deep tree can exhaust the process stack.
 - Files: `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/ScanTreeBudget.cs`, `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs`
@@ -112,11 +106,12 @@
 - Cause: The native cursor uses a blocking synchronous handle and receives no cancellation signal.
 - Improvement path: Use cancellable overlapped/native I/O where practical, close/cancel the handle on cancellation, and document bounded cancellation latency for local and network paths.
 
-**Worker memory scales by one 1 MiB buffer per degree:**
-- Problem: The default parallel scan rents one root buffer plus one 1 MiB buffer for each worker. `MaxDegreeOfParallelism` has no upper bound, and channel capacities also multiply the supplied value by two.
+**Outstanding buffer rentals scale with the shared degree, which has no upper bound:**
+- Problem: Each active native read rents one 1 MiB buffer only while holding a slot on the scan-wide semaphore, so outstanding rentals are capped by `MaxDegreeOfParallelism`, not by open-cursor count (a parent cursor can stay open across an awaited child). `MaxDegreeOfParallelism` itself has no configured upper bound, so a large explicit degree still rents that many buffers concurrently.
 - Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/ScanTreeBudget.cs`
-- Cause: Buffer size and worker count are coupled directly to public budget input.
+- Cause: Buffer rental is coupled to slot acquisition, and slot count is coupled directly to public budget input with no maximum.
 - Improvement path: Cap the supported degree, use a validated capacity calculation, and benchmark smaller native buffers before exposing larger degrees.
+- Test coverage: `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` (`Outstanding_buffer_rentals_never_exceed_the_configured_degree`, `Concurrent_reads_never_exceed_the_configured_degree`) now proves the cap holds at a fixed degree; no test yet probes an extreme (very large) configured degree.
 
 **Large recursive deletes cannot be cancelled or coordinated with scans:**
 - Problem: Permanent directory deletion runs in a background task with no cancellation token while toolbar scan actions remain enabled because `MainWindowViewModel.IsBusy` excludes `ChartViewModel.IsDeleting`.
@@ -126,11 +121,11 @@
 
 ## Fragile Areas
 
-**Parallel worker failure coordination can hang:**
+**Fan-out failure coordination (resolved — no channels or fixed worker pool remain):**
 - Files: `ScannerCore/BoundedDirectoryWalker.cs`
-- Why fragile: The supervisor awaits the producer before observing `Task.WhenAll(workers)`. If all workers fault while the bounded work channel is full, the producer can wait forever for a reader, the results writer is never completed, and the fan-in loop cannot finish.
-- Safe modification: Link an internal cancellation source to producer/workers, observe worker failure concurrently with production, complete both channels exactly once, and preserve the original exception.
-- Test coverage: `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` covers equivalence, concurrency, and pre-cancelled scans but does not inject worker faults or assert completion under partial/full worker failure.
+- Prior risk: An earlier channel/fixed-worker-pool design could hang if every worker faulted while the bounded work channel was full, since the supervisor awaited the producer before observing `Task.WhenAll(workers)`.
+- Current design: Channels and the root-only worker pool were removed. Each fan-out child is scheduled with `Task.Run` into a bounded in-flight window; a linked `CancellationTokenSource` on `WalkContext` records the first non-cancellation failure (`Fail`), cancels sibling subtrees, and `ObserveAsync` drains every pending task after a failure so none of them ends up as an unobserved exception. `WalkAsync`'s blocking `GetAwaiter().GetResult()` on the caller's thread is the only wait in the walk.
+- Test coverage: `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` now injects faults and asserts completion under failure — `Single_slot_fan_out_completes_without_deadlock`, `Read_failure_in_one_subtree_aborts_the_scan_with_io_exception`, `Failed_subtree_leaves_no_sibling_reads_active_once_the_scan_returns`, and `Cancellation_during_fan_out_throws_operation_canceled` — in addition to the pre-existing equivalence/concurrency/cancellation coverage.
 
 **Unsafe native buffer parsing trusts ABI and buffer contents:**
 - Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore.Tests/DirectoryScannerParsingTests.cs`, `ScannerCore.Tests/DirectoryEntryCursorTests.cs`
@@ -159,10 +154,10 @@
 ## Scaling Limits
 
 **Retained scan tree:**
-- Current capacity: Defaults retain at most 100,000 nodes, 99 children per retained directory, six retained levels, 10,000 inaccessible path samples, and four top-level workers.
+- Current capacity: Defaults retain at most 100,000 nodes, 99 children per retained directory, six retained levels, and 10,000 inaccessible path samples. Parallelism defaults to fan-out limited to the root level (`ParallelFanOutLevels = 1`) at a shared degree of `Math.Min(Environment.ProcessorCount, 16)` (`MaxDegreeOfParallelism = 0` auto); `2`/`3` remain explicit, measured, non-default knobs.
 - Files: `ScannerCore/ScanTreeBudget.cs`, `ScannerCore/BoundedChildCollector.cs`, `ScannerCore/BoundedDirectoryWalker.cs`
-- Limit: Retained object count is bounded, but total traversal time remains proportional to all reachable entries; parallel root names and traversal call-stack depth are not bounded by the same budget.
-- Scaling path: Stream parallel work, use iterative traversal, expose measured budget telemetry, and reject unsafe budget maxima.
+- Limit: Retained object count is bounded, but total traversal time remains proportional to all reachable entries; traversal call-stack depth is not bounded by the same budget.
+- Scaling path: Use iterative traversal, expose measured budget telemetry, and reject unsafe budget maxima.
 
 **Sunburst layout and rendering:**
 - Current capacity: The builder declares 100,000 total segments and 100 segments per sector; the control also caches one geometry and brush per emitted segment.
@@ -220,11 +215,12 @@
 
 ## Test Coverage Gaps
 
-**Parallel fault, memory, and cancellation behavior:**
-- What's not tested: Worker exceptions with full channels, producer/consumer shutdown, wide roots containing millions of directories, cancellation during a native call, and extreme `MaxDegreeOfParallelism` values.
+**Parallel fault, memory, and cancellation behavior (partially covered):**
+- Now tested: Fan-out fault injection and sibling abort (`Read_failure_in_one_subtree_aborts_the_scan_with_io_exception`, `Failed_subtree_leaves_no_sibling_reads_active_once_the_scan_returns`), single-slot deadlock-freedom (`Single_slot_fan_out_completes_without_deadlock`), cancellation mid-fan-out (`Cancellation_during_fan_out_throws_operation_canceled`), and the concurrent-read/buffer-rental cap (`Concurrent_reads_never_exceed_the_configured_degree`, `Outstanding_buffer_rentals_never_exceed_the_configured_degree`) in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- What's still not tested: Wide roots containing millions of directories under fan-out (only sequential paths are covered by `ScannerCore.Tests/BoundedScanMemoryTests.cs`), cancellation during a native call itself (the native read is still synchronous — see the separate cancellation-latency concern below), and extreme `MaxDegreeOfParallelism` values (e.g. far above `Environment.ProcessorCount`).
 - Files: `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`, `ScannerCore.Tests/BoundedScanMemoryTests.cs`
-- Risk: Deadlocks and transient-memory regressions can pass the current bounded-node and small parallel-tree tests.
-- Priority: High
+- Risk: Remaining gaps (wide parallel trees, extreme degree) can still pass the current tests undetected.
+- Priority: Medium
 
 **Filesystem identity edge cases:**
 - What's not tested: Hard links, offline reparse tags, reparse cycles, mount points, long paths, and tree mutation during enumeration.
