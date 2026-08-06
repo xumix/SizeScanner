@@ -47,9 +47,11 @@ public sealed class ChartViewModelTests
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
     }
 
-    private static ChartViewModel CreateVm() => new(new NoopFs(), new NoopDialogs());
+    private static ChartViewModel CreateVm(FakeScanService? scan = null) =>
+        new(scan ?? new FakeScanService(), new NoopFs(), new NoopDialogs());
 
-    private static ChartViewModel CreateVm(IFileSystemActions fileSystem) => new(fileSystem, new NoopDialogs());
+    private static ChartViewModel CreateVm(IFileSystemActions fileSystem, FakeScanService? scan = null) =>
+        new(scan ?? new FakeScanService(), fileSystem, new NoopDialogs());
 
     private static FsItem SampleDriveRoot() =>
         TestTree.Dir("C:\\",
@@ -89,20 +91,242 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
-    public void Scoping_into_directory_updates_scope_state()
+    public async Task Scoping_into_directory_calls_scope_scan_with_full_path_and_updates_state()
     {
-        var vm = CreateVm();
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
         var root = SampleDriveRoot();
         vm.SetScan(root, isDrive: true, targetPath: "C:\\");
         vm.Refresh(0f, includeFreeSpace: false);
 
         var windows = root.Items![2];
-        Assert.True(vm.TryScopeAt(windows));
+        scan.ScopeResult = _ => windows;
+
+        Assert.True(await vm.TryScopeAtAsync(windows));
         Assert.True(vm.IsScoped);
         Assert.Contains("Windows", vm.ScopeLabel);
+        Assert.Equal([("C:\\Windows", true)], scan.ScopeCalls);
 
-        vm.GoToRootCommand.Execute(null);
+        await vm.GoToRootCommand.ExecuteAsync(null);
         Assert.False(vm.IsScoped);
+        Assert.Empty(scan.RootCalls);
+    }
+
+    [Fact]
+    public async Task TryScopeAtAsync_does_not_scan_non_scopable_nodes()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: true);
+
+        var freeSpace = root.Items![0];
+        var file = root.Items![3];
+        var aggregate = FsItem.CreateAggregate(50);
+
+        Assert.False(await vm.TryScopeAtAsync(freeSpace));
+        Assert.False(await vm.TryScopeAtAsync(file));
+        Assert.False(await vm.TryScopeAtAsync(aggregate));
+        Assert.Empty(scan.ScopeCalls);
+    }
+
+    [Fact]
+    public async Task Scope_scan_keeps_previous_chart_visible_until_it_completes()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        var layoutBefore = vm.Layout;
+
+        var windows = root.Items![2];
+        var pending = new TaskCompletionSource<FsItem>();
+        scan.PendingScope = pending;
+
+        var scopeTask = vm.TryScopeAtAsync(windows);
+
+        Assert.True(vm.IsScopeScanning);
+        Assert.False(vm.IsScoped);
+        Assert.Same(layoutBefore, vm.Layout);
+
+        pending.SetResult(TestTree.Dir("Windows", TestTree.File("kernel.sys", 300)));
+        Assert.True(await scopeTask);
+
+        Assert.True(vm.IsScoped);
+        Assert.False(vm.IsScopeScanning);
+    }
+
+    [Fact]
+    public async Task Cancelled_scope_scan_leaves_chart_unchanged()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        var layoutBefore = vm.Layout;
+
+        var windows = root.Items![2];
+        var pending = new TaskCompletionSource<FsItem>();
+        scan.PendingScope = pending;
+
+        var scopeTask = vm.TryScopeAtAsync(windows);
+        vm.CancelScopeScan();
+        pending.SetCanceled();
+
+        Assert.False(await scopeTask);
+        Assert.False(vm.IsScoped);
+        Assert.False(vm.IsScopeScanning);
+        Assert.Same(layoutBefore, vm.Layout);
+    }
+
+    [Fact]
+    public async Task Second_scope_replaces_first_scoped_tree_rather_than_retaining_both()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var windows = root.Items![2];
+        var firstScope = TestTree.Dir("Windows",
+            TestTree.Dir("System32", TestTree.File("a.dll", 10)));
+        scan.ScopeResult = _ => firstScope;
+        Assert.True(await vm.TryScopeAtAsync(windows));
+
+        var system32 = firstScope.Items![0];
+        var secondScope = TestTree.Dir("System32", TestTree.File("b.dll", 20));
+        scan.ScopeResult = _ => secondScope;
+        Assert.True(await vm.TryScopeAtAsync(system32));
+
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "b.dll");
+        Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "a.dll");
+        Assert.Equal([("C:\\Windows", true), ("C:\\Windows\\System32", true)], scan.ScopeCalls);
+    }
+
+    [Fact]
+    public async Task GoUpAsync_rescans_the_parent_directory()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("A",
+                TestTree.Dir("B", TestTree.File("f.bin", 10))));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var a = root.Items![0];
+        var b = a.Items![0];
+
+        var rescannedParent = TestTree.Dir("A", TestTree.Dir("B2", TestTree.File("g.bin", 5)));
+        scan.ScopeResult = target => target == "C:\\A\\B" ? b : rescannedParent;
+        await vm.TryScopeAtAsync(b);
+
+        await vm.GoUpCommand.ExecuteAsync(null);
+
+        Assert.Equal([("C:\\A\\B", false), ("C:\\A", false)], scan.ScopeCalls);
+        Assert.True(vm.IsScoped);
+        Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "B2");
+    }
+
+    [Fact]
+    public async Task GoUpAsync_clears_scope_without_rescanning_when_parent_is_cached_root()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("A", TestTree.File("f.bin", 10)));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var a = root.Items![0];
+        scan.ScopeResult = _ => a;
+        await vm.TryScopeAtAsync(a);
+
+        await vm.GoUpCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsScoped);
+        Assert.Equal([("C:\\A", false)], scan.ScopeCalls);
+    }
+
+    [Fact]
+    public async Task GoUpAsync_to_cached_root_rescans_when_root_is_stale()
+    {
+        // Repro for the GoUpAsync stale-root bug: a delete inside a scoped
+        // subtree marks the cached root stale, and going up to that cached
+        // root (rather than "Go to root") must still trigger a rescan instead
+        // of silently showing the stale tree with the deleted item still gone
+        // from the scope but present in the unrescanned root.
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var users = root.Items![0];
+        var scopedUsers = TestTree.Dir("Users", TestTree.File("profile.dat", 300));
+        scan.ScopeResult = _ => scopedUsers;
+        await vm.TryScopeAtAsync(users);
+
+        var scopedProfile = scopedUsers.Items![0];
+        vm.SetContextTarget(scopedProfile);
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        // The un-rescanned root tree must not be mutated by a scoped-tree delete.
+        Assert.Equal(500, root.Size);
+
+        var rescannedRoot = TestTree.Dir("C:\\", TestTree.File("page.sys", 200));
+        scan.RootResult = (_, _) => rescannedRoot;
+        FsItem? rescanned = null;
+        vm.RootRescanned += r => rescanned = r;
+
+        await vm.GoUpCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsScoped);
+        Assert.Same(rescannedRoot, rescanned);
+        Assert.Equal([("C:\\", false)], scan.RootCalls);
+    }
+
+    [Fact]
+    public async Task Delete_in_scoped_tree_marks_root_stale_and_GoToRoot_rescans_it()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = TestTree.Dir("C:\\",
+            TestTree.Dir("Users",
+                TestTree.File("profile.dat", 300)),
+            TestTree.File("page.sys", 200));
+        vm.SetScan(root, isDrive: false, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+
+        var users = root.Items![0];
+        var scopedUsers = TestTree.Dir("Users", TestTree.File("profile.dat", 300));
+        scan.ScopeResult = _ => scopedUsers;
+        await vm.TryScopeAtAsync(users);
+
+        var scopedProfile = scopedUsers.Items![0];
+        vm.SetContextTarget(scopedProfile);
+        await vm.DeleteCommand.ExecuteAsync(null);
+
+        // The un-rescanned root tree must not be mutated by a scoped-tree delete.
+        Assert.Equal(500, root.Size);
+
+        var rescannedRoot = TestTree.Dir("C:\\", TestTree.File("page.sys", 200));
+        scan.RootResult = (_, _) => rescannedRoot;
+        FsItem? rescanned = null;
+        vm.RootRescanned += r => rescanned = r;
+
+        await vm.GoToRootCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsScoped);
+        Assert.Same(rescannedRoot, rescanned);
+        Assert.Equal([("C:\\", false)], scan.RootCalls);
     }
 
     [Fact]
@@ -122,7 +346,7 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
-    public void CannotScope_into_free_space_or_files()
+    public async Task CannotScope_into_free_space_or_files()
     {
         var vm = CreateVm();
         var root = SampleDriveRoot();
@@ -131,8 +355,26 @@ public sealed class ChartViewModelTests
 
         var freeSpace = root.Items![0];
         var file = root.Items![3];
-        Assert.False(vm.TryScopeAt(freeSpace));
-        Assert.False(vm.TryScopeAt(file));
+        Assert.False(await vm.TryScopeAtAsync(freeSpace));
+        Assert.False(await vm.TryScopeAtAsync(file));
+    }
+
+    [Fact]
+    public void CannotScope_into_scanner_aggregate()
+    {
+        var vm = CreateVm();
+        var aggregate = FsItem.CreateAggregate(50);
+
+        Assert.False(vm.CanScopeTo(aggregate));
+    }
+
+    [Fact]
+    public void CanScope_into_directory_with_only_unretained_children()
+    {
+        var vm = CreateVm();
+        var dir = TestTree.DirWithUnretainedChildren("bounded", 500);
+
+        Assert.True(vm.CanScopeTo(dir));
     }
 
     [Fact]
@@ -177,9 +419,10 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
-    public void Scoping_recomputes_filter_threshold_from_display_root()
+    public async Task Scoping_recomputes_filter_threshold_from_display_root()
     {
-        var vm = CreateVm();
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
         var root = TestTree.Dir("C:\\",
             TestTree.File("huge", 100_000),
             TestTree.Dir("target",
@@ -198,7 +441,8 @@ public sealed class ChartViewModelTests
         Assert.DoesNotContain(vm.Layout.Segments, s => s.Node?.Name == "big");
 
         var target = root.Items![1];
-        Assert.True(vm.TryScopeAt(target));
+        scan.ScopeResult = _ => target;
+        Assert.True(await vm.TryScopeAtAsync(target));
 
         filteredAtRoot = Assert.Single(
             vm.Layout.Segments,
@@ -207,7 +451,7 @@ public sealed class ChartViewModelTests
         Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "big");
         Assert.Contains(vm.Layout.Segments, s => s.Node?.Name == "medium");
 
-        vm.GoToRootCommand.Execute(null);
+        await vm.GoToRootCommand.ExecuteAsync(null);
 
         filteredAtRoot = Assert.Single(
             vm.Layout.Segments,

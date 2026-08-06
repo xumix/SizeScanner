@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -17,6 +18,7 @@ namespace SizeScanner.Avalonia.ViewModels;
 public sealed partial class ChartViewModel : ViewModelBase
 {
     private readonly SunburstChartBuilder _builder = new();
+    private readonly IScanService _scan;
     private readonly IFileSystemActions _fileSystem;
     private readonly IDialogService _dialogs;
 
@@ -25,15 +27,31 @@ public sealed partial class ChartViewModel : ViewModelBase
     private bool _isDriveScan;
     private bool _includeFreeSpace;
     private float _filterPercent;
-    private string _targetPath = string.Empty;
+    private string _rootPath = string.Empty;
+    private bool _rootIsStale;
     private FsItem? _scopedRoot;
+    private string _scopePath = string.Empty;
     private string _displayRootPath = string.Empty;
+    private CancellationTokenSource? _scopeCts;
 
-    public ChartViewModel(IFileSystemActions fileSystem, IDialogService dialogs)
+    public ChartViewModel(IScanService scan, IFileSystemActions fileSystem, IDialogService dialogs)
     {
+        _scan = scan;
         _fileSystem = fileSystem;
         _dialogs = dialogs;
     }
+
+    /// <summary>Raised after a stale cached root is successfully rescanned by <see cref="GoToRootAsync"/>.</summary>
+    public event Action<FsItem>? RootRescanned;
+
+    /// <summary>
+    /// Set by <c>MainWindowViewModel</c> while a toolbar-initiated scan is calling the shared
+    /// <see cref="IScanService.RunAsync"/>. A stale "Go to root"/"Go up" rescan also calls
+    /// RunAsync, and the two are not mutually exclusive via <see cref="IsScopeScanning"/> alone
+    /// (that flag only guards against a second scope-side rescan), so this flag lets the chart
+    /// refuse to race the toolbar for the same non-thread-safe <c>DriveScanner</c>.
+    /// </summary>
+    public bool IsRootScanInProgress { get; set; }
 
     [ObservableProperty] private SunburstChart _layout = new([], 0, 0, 0);
     [ObservableProperty] private bool _isScoped;
@@ -42,17 +60,22 @@ public sealed partial class ChartViewModel : ViewModelBase
     [ObservableProperty] private string _hoverToolTip = string.Empty;
     [ObservableProperty] private bool _isDeleting;
     [ObservableProperty] private string _deleteStatusText = string.Empty;
+    [ObservableProperty] private bool _isScopeScanning;
+    [ObservableProperty] private string _scopeStatusText = string.Empty;
 
     public FsItem? ContextTarget { get; private set; }
     public string ContextTargetPath { get; private set; } = string.Empty;
 
     public void SetScan(FsItem scanRoot, bool isDrive, string targetPath)
     {
+        _scopeCts?.Cancel();
         _scanRoot = scanRoot;
         _isDriveScan = isDrive;
-        _targetPath = targetPath;
+        _rootPath = targetPath;
+        _rootIsStale = false;
         _chartRootWithoutFreeSpace = BuildChartRootWithoutFreeSpace(scanRoot, isDrive);
         _scopedRoot = null;
+        _scopePath = string.Empty;
         UpdateScopeState();
     }
 
@@ -95,34 +118,124 @@ public sealed partial class ChartViewModel : ViewModelBase
 
     public bool CanScopeTo(FsItem? item) => ChartNodeRules.IsScopable(item);
 
-    public bool TryScopeAt(FsItem node)
+    public void CancelScopeScan() => _scopeCts?.Cancel();
+
+    public Task<bool> TryScopeAtAsync(FsItem node) =>
+        !CanScopeTo(node) || IsScopeScanning
+            ? Task.FromResult(false)
+            : ScopeToPathAsync(BuildFullPath(AncestorChain(node)));
+
+    private async Task<bool> ScopeToPathAsync(string path)
     {
-        if (!CanScopeTo(node)) return false;
-        _scopedRoot = node;
+        var scanned = await RunChartScanAsync(
+            (token, progress) => _scan.RunScopeAsync(
+                path, token, progress, ScanTreeBudget.Default, preferAllocatedSize: _isDriveScan),
+            "Scope scan failed");
+        if (scanned is null)
+            return false;
+
+        // Replacing rather than pushing preserves the "root tree + current
+        // scope tree" memory bound: the previous scope tree has no owner
+        // left and becomes collectible, and no scope history is kept.
+        _scopedRoot = scanned;
+        _scopePath = path;
         UpdateScopeState();
         RebuildLayout();
         return true;
     }
 
-    [RelayCommand]
-    private void GoUp()
+    /// <summary>
+    /// Runs one chart-initiated scan under the cancellation, status-text, and error handling
+    /// shared by scoping, "Go up", and a stale-root refresh. Returns null when the scan was
+    /// cancelled or failed, in which case the caller leaves the current chart unchanged.
+    /// </summary>
+    private async Task<FsItem?> RunChartScanAsync(
+        Func<CancellationToken, IProgress<ScanProgress>, Task<FsItem>> scan,
+        string failureTitle)
     {
-        if (_scopedRoot is null || _scanRoot is null) return;
-
-        var parent = _scopedRoot.Parent;
-        _scopedRoot = parent is null || ReferenceEquals(parent, _scanRoot) ? null : parent;
-        UpdateScopeState();
-        RebuildLayout();
+        using var cts = new CancellationTokenSource();
+        _scopeCts = cts;
+        IsScopeScanning = true;
+        try
+        {
+            return await scan(
+                cts.Token,
+                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowInfoAsync(failureTitle, ex.Message);
+            return null;
+        }
+        finally
+        {
+            _scopeCts = null;
+            IsScopeScanning = false;
+            ScopeStatusText = string.Empty;
+        }
     }
 
     [RelayCommand]
-    private void GoToRoot()
+    private async Task GoUpAsync()
     {
-        if (_scopedRoot is null) return;
+        if (_scopedRoot is null || IsScopeScanning || IsRootScanInProgress)
+            return;
+
+        var parent = Directory.GetParent(_scopePath)?.FullName;
+        if (parent is null || PathsEqual(parent, _rootPath))
+        {
+            // The cached root may have gone stale (e.g. a delete inside the scoped
+            // tree), so route through GoToRootAsync to rescan it when needed rather
+            // than always showing the stale cached tree.
+            await GoToRootAsync();
+            return;
+        }
+
+        await ScopeToPathAsync(parent);
+    }
+
+    [RelayCommand]
+    private async Task GoToRootAsync()
+    {
+        if (_scopedRoot is null || IsScopeScanning || IsRootScanInProgress)
+            return;
+
+        if (!_rootIsStale)
+        {
+            _scopedRoot = null;
+            _scopePath = string.Empty;
+            UpdateScopeState();
+            RebuildLayout();
+            return;
+        }
+
+        var scanned = await RunChartScanAsync(
+            (token, progress) => _scan.RunAsync(
+                _rootPath, _isDriveScan, token, progress, ScanTreeBudget.Default),
+            "Root scan failed");
+        if (scanned is null)
+            return;
+
+        _scanRoot = scanned;
+        _chartRootWithoutFreeSpace = BuildChartRootWithoutFreeSpace(scanned, _isDriveScan);
+        _rootIsStale = false;
+        RootRescanned?.Invoke(scanned);
+
         _scopedRoot = null;
+        _scopePath = string.Empty;
         UpdateScopeState();
         RebuildLayout();
     }
+
+    private static bool PathsEqual(string a, string b) =>
+        string.Equals(TrimSeparators(a), TrimSeparators(b), StringComparison.OrdinalIgnoreCase);
+
+    private static string TrimSeparators(string path) =>
+        path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     public void SetContextTarget(FsItem? node)
     {
@@ -214,6 +327,12 @@ public sealed partial class ChartViewModel : ViewModelBase
 
         for (var ancestor = parent; ancestor is not null; ancestor = ancestor.Parent)
             ancestor.Size -= node.Size;
+
+        // The scoped tree is an independent rescan, not a live view of
+        // _scanRoot, so a delete there leaves the cached root stale until
+        // "Go to root" rescans it — never as retained scope history.
+        if (_scopedRoot is not null)
+            _rootIsStale = true;
     }
 
     private FsItem GetDisplayRoot() => _scopedRoot ?? GetBaseChartRoot();
@@ -226,14 +345,17 @@ public sealed partial class ChartViewModel : ViewModelBase
     private void UpdateScopeState()
     {
         IsScoped = _scopedRoot is not null;
-        if (_scopedRoot is null || _scanRoot is null)
+        if (_scopedRoot is null)
         {
-            _displayRootPath = _targetPath;
+            _displayRootPath = _rootPath;
             ScopeLabel = string.Empty;
             return;
         }
 
-        _displayRootPath = _scopedRoot.TryGetPathFrom(_scanRoot, out var path) ? path : _targetPath;
+        // The rescanned scope is its own tree with its own root, so it cannot
+        // be resolved as a path from _scanRoot; _scopePath already holds its
+        // full absolute path.
+        _displayRootPath = _scopePath;
         ScopeLabel = $"{_displayRootPath}  |  {Humanize.FsItem(_scopedRoot)}";
     }
 

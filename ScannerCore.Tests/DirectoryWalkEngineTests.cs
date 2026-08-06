@@ -19,7 +19,7 @@ public sealed class DirectoryWalkEngineTests
         temp.CreateFile("sub/b.txt", 250);
 
         var engine = new DirectoryWalkEngine();
-        var result = engine.Scan(temp.Path, isDriveScan: false, CancellationToken.None, onProgress: null);
+        var result = engine.Scan(temp.Path, isDriveScan: false, CancellationToken.None, onProgress: null, ScanTreeBudget.Default);
 
         Assert.Equal(350, result.Root.Size);
         Assert.Equal(350, result.Total);
@@ -44,7 +44,7 @@ public sealed class DirectoryWalkEngineTests
 
         var paths = new System.Collections.Concurrent.ConcurrentBag<string>();
         new DirectoryWalkEngine().Scan(temp.Path, isDriveScan: false, CancellationToken.None,
-            (path, _) => paths.Add(path));
+            (path, _) => paths.Add(path), ScanTreeBudget.Default);
 
         Assert.Contains(paths, p => p.Contains("sub"));
     }

@@ -31,4 +31,29 @@ public sealed class FsItemTests
     {
         Assert.True(typeof(FsItem).IsSealed);
     }
+
+    [Fact]
+    public void Aggregate_is_non_directory_non_actionable_core_node()
+    {
+        var aggregate = FsItem.CreateAggregate(1_024);
+
+        Assert.Equal(FsItemKind.Aggregate, aggregate.Kind);
+        Assert.Equal(string.Empty, aggregate.Name);
+        Assert.Equal(1_024, aggregate.Size);
+        Assert.False(aggregate.IsDir);
+        Assert.Null(aggregate.Items);
+    }
+
+    [Fact]
+    public void CountRetainedNodes_counts_only_the_bounded_object_graph()
+    {
+        var root = new FsItem("root", 10, isDir: true);
+        root.AttachChildren(
+        [
+            new FsItem("kept.bin", 5, isDir: false),
+            FsItem.CreateAggregate(5)
+        ]);
+
+        Assert.Equal(3, root.CountRetainedNodes());
+    }
 }

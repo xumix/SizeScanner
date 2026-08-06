@@ -48,6 +48,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _folderPicker = folderPicker;
         Chart = chart;
         Chart.PropertyChanged += OnChartPropertyChanged;
+        Chart.RootRescanned += OnChartRootRescanned;
         _settings = _settingsStore.Load();
 
         for (var i = 0; i <= 8; i++)
@@ -66,7 +67,8 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _filterIndex = 4;
     [ObservableProperty] private int _freeSpaceIndex = 1;
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HoverStatusVisible))]
+    [NotifyPropertyChangedFor(nameof(HoverStatusVisible), nameof(IsBusy))]
+    [NotifyCanExecuteChangedFor(nameof(ScanDriveCommand), nameof(BrowseCommand), nameof(RescanCommand))]
     private bool _isScanning;
 
     [ObservableProperty] private bool _canRescan;
@@ -96,9 +98,26 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public double InaccessiblePaneColumnMinWidth =>
         InaccessiblePaneVisible ? DefaultInaccessiblePaneWidth : 0;
 
-    public string DisplayStatusText => Chart.IsDeleting ? Chart.DeleteStatusText : StatusText;
+    public string DisplayStatusText =>
+        Chart.IsDeleting ? Chart.DeleteStatusText
+        : Chart.IsScopeScanning ? BuildScopeScanningStatusText()
+        : StatusText;
 
-    public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting;
+    public bool HoverStatusVisible => !IsBusy && !Chart.IsDeleting;
+
+    /// <summary>
+    /// A scan is in flight, from either the toolbar or a scope-side rescan. Backs toolbar
+    /// IsEnabled bindings, and gates every scan-start action via <see cref="CanStartScan"/>:
+    /// a stale "Go to root"/"Go up" rescan also calls the shared
+    /// <see cref="IScanService.RunAsync"/>, so the toolbar must stay disabled for that too or
+    /// two RunAsync calls can race the same non-thread-safe DriveScanner.
+    /// </summary>
+    public bool IsBusy => IsScanning || Chart.IsScopeScanning;
+
+    private string BuildScopeScanningStatusText() =>
+        string.IsNullOrEmpty(Chart.ScopeStatusText)
+            ? "Scanning..."
+            : $"Scanning {Chart.ScopeStatusText}...";
 
     private static readonly string[] FilterLabels =
     [
@@ -124,14 +143,18 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _suppressOptionChanges = false;
     }
 
-    [RelayCommand]
+    private bool CanStartScan() => !IsBusy;
+
+    private bool CanExecuteRescan() => CanRescan && CanStartScan();
+
+    [RelayCommand(CanExecute = nameof(CanStartScan))]
     private async Task ScanDriveAsync(DriveItem? drive)
     {
         if (drive is not null)
             await ScanTargetAsync(drive.Root, isDrive: true);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanStartScan))]
     private async Task BrowseAsync()
     {
         var path = await _folderPicker.PickFolderAsync("Select a folder to scan");
@@ -139,7 +162,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             await ScanTargetAsync(path, isDrive: false);
     }
 
-    [RelayCommand(CanExecute = nameof(CanRescan))]
+    [RelayCommand(CanExecute = nameof(CanExecuteRescan))]
     private async Task RescanAsync()
     {
         if (!string.IsNullOrEmpty(_scan.LastTarget))
@@ -147,7 +170,13 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CancelScan() => _scanCts?.Cancel();
+    private void CancelScan()
+    {
+        if (_scanCts is not null)
+            _scanCts.Cancel();
+        else
+            Chart.CancelScopeScan();
+    }
 
     [RelayCommand]
     private void ToggleInaccessiblePane()
@@ -165,11 +194,16 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     public async Task ScanTargetAsync(string target, bool isDrive)
     {
+        // Defense in depth alongside CanStartScan()/CanExecuteRescan(): refuse to start a
+        // second RunAsync while a stale-root rescan is racing the shared ScanService.
+        if (Chart.IsScopeScanning) return;
+
         _scanCts?.Dispose();
         _scanCts = new CancellationTokenSource();
         var token = _scanCts.Token;
 
         SetScanningState(true);
+        Chart.IsRootScanInProgress = true;
         StatusText = $"Scanning {target}...";
         StatusDetails = string.Empty;
         ProgressValue = 0;
@@ -184,6 +218,10 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         {
             FinishCancelled();
             return;
+        }
+        finally
+        {
+            Chart.IsRootScanInProgress = false;
         }
 
         if (token.IsCancellationRequested) { FinishCancelled(); return; }
@@ -228,11 +266,26 @@ public sealed partial class MainWindowViewModel : ViewModelBase
 
     private void OnChartPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(ChartViewModel.IsDeleting) or nameof(ChartViewModel.DeleteStatusText))
+        if (e.PropertyName is nameof(ChartViewModel.IsDeleting) or nameof(ChartViewModel.DeleteStatusText)
+            or nameof(ChartViewModel.IsScopeScanning) or nameof(ChartViewModel.ScopeStatusText))
         {
             OnPropertyChanged(nameof(DisplayStatusText));
             OnPropertyChanged(nameof(HoverStatusVisible));
         }
+
+        if (e.PropertyName == nameof(ChartViewModel.IsScopeScanning))
+        {
+            OnPropertyChanged(nameof(IsBusy));
+            ScanDriveCommand.NotifyCanExecuteChanged();
+            BrowseCommand.NotifyCanExecuteChanged();
+            RescanCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private void OnChartRootRescanned(FsItem root)
+    {
+        _scanRoot = root;
+        PopulateInaccessible(_scan.IsDriveScan);
     }
 
     private void FinishCancelled()

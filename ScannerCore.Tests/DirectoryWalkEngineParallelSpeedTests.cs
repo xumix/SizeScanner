@@ -75,7 +75,7 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
         GC.Collect();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = engine.Scan(MeasurementRoot, isDriveScan: true, CancellationToken.None, onProgress: null);
+        var result = engine.Scan(MeasurementRoot, isDriveScan: true, CancellationToken.None, onProgress: null, ScanTreeBudget.Default);
         stopwatch.Stop();
 
         total = result.Total;

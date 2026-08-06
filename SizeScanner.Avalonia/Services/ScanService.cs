@@ -19,7 +19,8 @@ public sealed class ScanService : IScanService
         string target,
         bool isDrive,
         CancellationToken cancellationToken,
-        IProgress<ScanProgress> progress)
+        IProgress<ScanProgress> progress,
+        ScanTreeBudget? budget = null)
     {
         LastTarget = target;
         IsDriveScan = isDrive;
@@ -27,8 +28,25 @@ public sealed class ScanService : IScanService
 
         return await Task.Run(
             () => isDrive
-                ? Scanner.ScanDrive(target, cancellationToken, progress)
-                : Scanner.ScanDirectory(target, cancellationToken, progress),
+                ? Scanner.ScanDrive(target, cancellationToken, progress, budget)
+                : Scanner.ScanDirectory(target, cancellationToken, progress, budget),
+            cancellationToken);
+    }
+
+    public async Task<FsItem> RunScopeAsync(
+        string target,
+        CancellationToken cancellationToken,
+        IProgress<ScanProgress> progress,
+        ScanTreeBudget? budget = null,
+        bool preferAllocatedSize = false)
+    {
+        // A fresh, throwaway scanner: unlike RunAsync, this must not mutate
+        // LastTarget/IsDriveScan/Scanner, which belong to the root scan and
+        // drive the rescan button and inaccessible-paths pane.
+        var scopeScanner = new DriveScanner();
+
+        return await Task.Run(
+            () => scopeScanner.ScanDirectory(target, cancellationToken, progress, budget, preferAllocatedSize),
             cancellationToken);
     }
 }

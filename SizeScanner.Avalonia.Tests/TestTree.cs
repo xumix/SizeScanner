@@ -31,4 +31,15 @@ internal static class TestTree
     {
         typeof(FsItem).GetProperty(nameof(FsItem.Parent))!.SetValue(child, parent);
     }
+
+    /// <summary>
+    /// A directory whose bounded scan cleared every child (leaving <see cref="FsItem.Items"/>
+    /// empty) but still tracks hidden descendants via <see cref="FsItem.HasUnretainedChildren"/>.
+    /// </summary>
+    public static FsItem DirWithUnretainedChildren(string name, long size)
+    {
+        var dir = new FsItem(name, size, isDir: true) { Items = [] };
+        typeof(FsItem).GetProperty(nameof(FsItem.HasUnretainedChildren))!.SetValue(dir, true);
+        return dir;
+    }
 }

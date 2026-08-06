@@ -17,6 +17,7 @@ public sealed class ScanEngineSelectorTests
         private readonly bool _canHandle;
         private readonly FsItem? _result;
         public int ScanCalls;
+        public ScanTreeBudget? LastBudget;
 
         public FakeEngine(bool canHandle, FsItem? result)
         {
@@ -26,9 +27,10 @@ public sealed class ScanEngineSelectorTests
 
         public bool CanHandle(string target, bool isDriveScan, bool isElevated) => _canHandle;
 
-        public ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress)
+        public ScanResult Scan(string target, bool isDriveScan, CancellationToken token, Action<string, long>? onProgress, ScanTreeBudget budget)
         {
             ScanCalls++;
+            LastBudget = budget;
             if (_result is null) throw new IOException("engine failure");
             return new ScanResult { Root = _result, Total = _result.Size, Inaccessible = Array.Empty<string>() };
         }
@@ -41,7 +43,7 @@ public sealed class ScanEngineSelectorTests
         var fallback = new FakeEngine(canHandle: true, new FsItem("fallback", 20, isDir: true));
         var selector = new ScanEngineSelector(new IScanEngine[] { preferred, fallback }, isElevated: true);
 
-        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null);
+        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null, ScanTreeBudget.Default);
 
         Assert.Equal("preferred", result.Root.Name);
         Assert.Equal(0, fallback.ScanCalls);
@@ -54,7 +56,7 @@ public sealed class ScanEngineSelectorTests
         var capable = new FakeEngine(canHandle: true, new FsItem("capable", 20, isDir: true));
         var selector = new ScanEngineSelector(new IScanEngine[] { incapable, capable }, isElevated: true);
 
-        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null);
+        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null, ScanTreeBudget.Default);
 
         Assert.Equal("capable", result.Root.Name);
         Assert.Equal(0, incapable.ScanCalls);
@@ -67,9 +69,35 @@ public sealed class ScanEngineSelectorTests
         var fallback = new FakeEngine(canHandle: true, new FsItem("fallback", 20, isDir: true));
         var selector = new ScanEngineSelector(new IScanEngine[] { failing, fallback }, isElevated: true);
 
-        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null);
+        var result = selector.Scan("C:", isDriveScan: true, CancellationToken.None, null, ScanTreeBudget.Default);
 
         Assert.Equal("fallback", result.Root.Name);
         Assert.Equal(1, failing.ScanCalls);
+    }
+
+    [Fact]
+    public void Forwards_the_same_budget_to_the_selected_engine()
+    {
+        var engine = new FakeEngine(canHandle: true, new FsItem("root", 10, isDir: true));
+        var selector = new ScanEngineSelector(new IScanEngine[] { engine }, isElevated: true);
+        var budget = new ScanTreeBudget(maxRetainedNodes: 5_000);
+
+        selector.Scan("C:", isDriveScan: true, CancellationToken.None, null, budget);
+
+        Assert.Same(budget, engine.LastBudget);
+    }
+
+    [Fact]
+    public void Forwards_the_same_budget_to_the_fallback_engine()
+    {
+        var failing = new FakeEngine(canHandle: true, result: null);
+        var fallback = new FakeEngine(canHandle: true, new FsItem("fallback", 20, isDir: true));
+        var selector = new ScanEngineSelector(new IScanEngine[] { failing, fallback }, isElevated: true);
+        var budget = new ScanTreeBudget(maxRetainedNodes: 5_000);
+
+        selector.Scan("C:", isDriveScan: true, CancellationToken.None, null, budget);
+
+        Assert.Same(budget, failing.LastBudget);
+        Assert.Same(budget, fallback.LastBudget);
     }
 }

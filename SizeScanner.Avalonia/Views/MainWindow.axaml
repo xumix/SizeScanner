@@ -23,7 +23,7 @@
                         Command="{Binding ToggleInaccessiblePaneCommand}"
                         IsEnabled="{Binding !IsScanning}" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsScanning}">
+                <ItemsControl ItemsSource="{Binding Drives}" IsEnabled="{Binding !IsBusy}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel Orientation="Horizontal" Spacing="4" />
@@ -38,9 +38,9 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <Button Content="Browse..." Command="{Binding BrowseCommand}"
-                        IsEnabled="{Binding !IsScanning}" />
+                        IsEnabled="{Binding !IsBusy}" />
                 <Separator Height="NaN" Width="1" />
-                    <Button Content="Rescan" Command="{Binding RescanCommand}" IsEnabled="{Binding !IsScanning}" />
+                    <Button Content="Rescan" Command="{Binding RescanCommand}" IsEnabled="{Binding !IsBusy}" />
                 <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
                 <ProgressBar Width="280" Minimum="0" Maximum="100"
                              Value="{Binding ProgressValue}"

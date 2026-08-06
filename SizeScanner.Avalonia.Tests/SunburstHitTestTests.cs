@@ -12,7 +12,7 @@ namespace SizeScanner.Avalonia.Tests;
 public sealed class SunburstHitTestTests
 {
     [Fact]
-    public void ActionableSegmentsByRing_groups_and_sorts_by_start_angle()
+    public void HitTestableSegmentsByRing_groups_and_sorts_by_start_angle()
     {
         var root = TestTree.Dir("root",
             TestTree.File("a", 50),
@@ -20,7 +20,7 @@ public sealed class SunburstHitTestTests
             TestTree.File("c", 20));
         var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
 
-        var ring0 = chart.ActionableSegmentsByRing(0);
+        var ring0 = chart.HitTestableSegmentsByRing(0);
 
         Assert.NotEmpty(ring0);
         Assert.All(ring0, s => Assert.Equal(0, s.RingIndex));
@@ -45,6 +45,22 @@ public sealed class SunburstHitTestTests
 
         var outer = SunburstHitTest.HitTest(chart, new Point(100, 20), new Size(200, 200));
         Assert.Equal("childDir", outer?.Node?.Name);
+    }
+
+    [Fact]
+    public void HitTest_resolves_synthetic_bands_so_they_stay_hoverable()
+    {
+        // The aggregate occupies the second half of ring 0, so a point to the lower-left
+        // lands on the [Other] band it renders as.
+        var root = TestTree.Dir("root",
+            TestTree.File("kept", 100),
+            FsItem.CreateAggregate(100));
+        var chart = new SunburstChartBuilder().Build(root, filterThreshold: 0);
+
+        var hit = SunburstHitTest.HitTest(chart, new Point(100, 140), new Size(200, 200));
+
+        Assert.NotNull(hit);
+        Assert.Equal(ChartDisplayMetadata.OtherName, hit!.DisplayName);
     }
 
     [Fact]

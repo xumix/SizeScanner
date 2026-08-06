@@ -17,7 +17,7 @@ public sealed class ViewLocatorTests
 
     [Fact]
     public void Match_returns_true_for_view_models() =>
-        Assert.True(_locator.Match(new ChartViewModel(new NoopFs(), new NoopDialogs())));
+        Assert.True(_locator.Match(CreateChartViewModel()));
 
     [Fact]
     public void Match_returns_false_for_non_view_models() =>
@@ -30,10 +30,13 @@ public sealed class ViewLocatorTests
     [Fact]
     public void Build_returns_ChartView_for_ChartViewModel()
     {
-        var view = _locator.Build(new ChartViewModel(new NoopFs(), new NoopDialogs()));
+        var view = _locator.Build(CreateChartViewModel());
 
         Assert.IsType<ChartView>(view);
     }
+
+    private static ChartViewModel CreateChartViewModel() =>
+        new(new FakeScanService(), new NoopFs(), new NoopDialogs());
 
     [Fact]
     public void Build_returns_TextBlock_for_unregistered_view_model()

@@ -2,17 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 namespace ScannerCore
 {
-    public class DirectoryScanner
+    public class DirectoryScanner : IDirectoryEntrySource
     {
         private const int FileDirectoryInformation = 1;
         private const uint StatusSuccess = 0x00000000;
@@ -72,7 +70,7 @@ namespace ScannerCore
 
         #endregion
 
-        private const int BufferSize = 1024 * 1024;
+        internal const int BufferSize = 1024 * 1024;
         private readonly bool PreferAllocatedSize;
 
         public DirectoryScanner(bool preferAllocatedSize)
@@ -80,62 +78,24 @@ namespace ScannerCore
             PreferAllocatedSize = preferAllocatedSize;
         }
 
-        public unsafe List<FsItem>? Scan(string dir, ref long processed)
+        internal IDirectoryEntryCursor? Open(string path)
         {
-            var hFolder = NativeMethods.CreateFile(dir,
+            var handle = NativeMethods.CreateFile(path,
                                                    FileListDirectory,
                                                    FileShare.ReadWrite | FileShare.Delete,
                                                    IntPtr.Zero,
                                                    FileMode.Open,
                                                    FileFlagBackupSemantics,
                                                    IntPtr.Zero);
-            if (hFolder.IsInvalid)
-                return null;
 
-            var res = new List<FsItem>();
-            var rented = ArrayPool<byte>.Shared.Rent(BufferSize);
-            try
-            {
-                fixed (byte* bufferPtr = rented)
-                {
-                    var statusBlock = new IO_STATUS_BLOCK();
-                    while (true)
-                    {
-                        var ntstatus = NativeMethods.NtQueryDirectoryFile(
-                            hFolder,
-                            IntPtr.Zero,
-                            IntPtr.Zero,
-                            IntPtr.Zero,
-                            statusBlock,
-                            (IntPtr)bufferPtr,
-                            BufferSize,
-                            FileDirectoryInformation,
-                            false,
-                            IntPtr.Zero,
-                            false);
-
-                        if (ntstatus == StatusSuccess)
-                        {
-                            ParseBuffer(bufferPtr, res, ref processed);
-                            continue;
-                        }
-
-                        if (ntstatus != StatusNoMoreFiles)
-                            Debug.WriteLine($"NtQueryDirectoryFile failed with NTSTATUS 0x{ntstatus:X8}.");
-                        break;
-                    }
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-                hFolder.Close();
-            }
-
-            return res;
+            return handle.IsInvalid
+                ? null
+                : new Cursor(handle, PreferAllocatedSize);
         }
 
-        private unsafe void ParseBuffer(byte* basePtr, List<FsItem> items, ref long processed)
+        IDirectoryEntryCursor? IDirectoryEntrySource.Open(string path) => Open(path);
+
+        private static unsafe void ParseBuffer(byte* basePtr, bool preferAllocatedSize, IDirectoryEntrySink sink)
         {
             const int OffsetNextEntry = 0;
             const int OffsetEndOfFile = 40;
@@ -155,16 +115,19 @@ namespace ScannerCore
                 if (!isReparse || isOffline)
                 {
                     var nameLengthBytes = Unsafe.ReadUnaligned<uint>(ptr + OffsetFileNameLength);
-                    var name = new string((char*)(ptr + OffsetFileName), 0, (int)(nameLengthBytes / 2));
-                    var isDir = (attributes & FileAttributeDirectory) != 0;
-                    var isDotDir = isDir && name is "." or "..";
-                    if (!isDotDir)
+                    var name = new ReadOnlySpan<char>(
+                        (char*)(ptr + OffsetFileName),
+                        checked((int)(nameLengthBytes / 2)));
+                    var isDirectory = (attributes & FileAttributeDirectory) != 0;
+
+                    if (!(isDirectory
+                        && (name.SequenceEqual(".".AsSpan())
+                            || name.SequenceEqual("..".AsSpan()))))
                     {
-                        var size = PreferAllocatedSize
+                        var size = preferAllocatedSize
                             ? Unsafe.ReadUnaligned<long>(ptr + OffsetAllocationSize)
                             : Unsafe.ReadUnaligned<long>(ptr + OffsetEndOfFile);
-                        items.Add(new FsItem(name, size, isDir));
-                        processed += size;
+                        sink.OnEntry(name, size, isDirectory);
                     }
                 }
 
@@ -172,6 +135,60 @@ namespace ScannerCore
                     break;
                 ptr += nextEntryOffset;
             }
+        }
+
+        private sealed class Cursor : IDirectoryEntryCursor
+        {
+            private readonly SafeFileHandle _handle;
+            private readonly bool _preferAllocatedSize;
+            private readonly IO_STATUS_BLOCK _statusBlock = new();
+            private bool _completed;
+
+            internal Cursor(SafeFileHandle handle, bool preferAllocatedSize)
+            {
+                _handle = handle;
+                _preferAllocatedSize = preferAllocatedSize;
+            }
+
+            public unsafe DirectoryBatchResult ReadNext(Span<byte> buffer, IDirectoryEntrySink sink)
+            {
+                if (_completed)
+                    return DirectoryBatchResult.Completed;
+
+                uint ntstatus;
+                fixed (byte* bufferPtr = buffer)
+                {
+                    ntstatus = NativeMethods.NtQueryDirectoryFile(
+                        _handle,
+                        IntPtr.Zero,
+                        IntPtr.Zero,
+                        IntPtr.Zero,
+                        _statusBlock,
+                        (IntPtr)bufferPtr,
+                        (uint)buffer.Length,
+                        FileDirectoryInformation,
+                        false,
+                        IntPtr.Zero,
+                        false);
+
+                    if (ntstatus == StatusSuccess)
+                    {
+                        ParseBuffer(bufferPtr, _preferAllocatedSize, sink);
+                        return DirectoryBatchResult.Entries;
+                    }
+                }
+
+                _completed = true;
+                if (ntstatus != StatusNoMoreFiles)
+                {
+                    Debug.WriteLine($"NtQueryDirectoryFile failed with NTSTATUS 0x{ntstatus:X8}.");
+                    return DirectoryBatchResult.Failed;
+                }
+
+                return DirectoryBatchResult.Completed;
+            }
+
+            public void Dispose() => _handle.Close();
         }
     }
 }

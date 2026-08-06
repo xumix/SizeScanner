@@ -102,7 +102,7 @@ public partial class ChartView : UserControl
         Vm?.ClearHover();
     }
 
-    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    private async void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (Vm is null) return;
         ToolTip.SetIsOpen(_chart, false);
@@ -111,7 +111,7 @@ public partial class ChartView : UserControl
 
         if (props.IsLeftButtonPressed)
         {
-            if (node is not null) Vm.TryScopeAt(node);
+            if (node is not null) await Vm.TryScopeAtAsync(node);
             return;
         }
 
