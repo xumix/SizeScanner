@@ -44,14 +44,14 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             var sequentialFirst = round % 2 == 0;
             if (sequentialFirst)
             {
-                sequentialTimes.Add(MeasureScan(sequentialEngine, out var sequentialTotal));
-                parallelTimes.Add(MeasureScan(parallelEngine, out var parallelTotal));
+                sequentialTimes.Add(MeasureScan(sequentialEngine, ScanTreeBudget.Default, out var sequentialTotal));
+                parallelTimes.Add(MeasureScan(parallelEngine, ScanTreeBudget.Default, out var parallelTotal));
                 output.WriteLine($"Round {round + 1}: sequential total={sequentialTotal:N0}, parallel total={parallelTotal:N0}");
             }
             else
             {
-                parallelTimes.Add(MeasureScan(parallelEngine, out var parallelTotal));
-                sequentialTimes.Add(MeasureScan(sequentialEngine, out var sequentialTotal));
+                parallelTimes.Add(MeasureScan(parallelEngine, ScanTreeBudget.Default, out var parallelTotal));
+                sequentialTimes.Add(MeasureScan(sequentialEngine, ScanTreeBudget.Default, out var sequentialTotal));
                 output.WriteLine($"Round {round + 1}: parallel total={parallelTotal:N0}, sequential total={sequentialTotal:N0}");
             }
         }
@@ -68,14 +68,55 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             $"Parallel walk ({parallelMedian.TotalSeconds:F1}s) should be faster than sequential ({sequentialMedian.TotalSeconds:F1}s) on {MeasurementRoot}.");
     }
 
-    private static TimeSpan MeasureScan(DirectoryWalkEngine engine, out long total)
+    [Fact]
+    [Trait("Category", "Performance")]
+    public void Fan_out_configuration_matrix_report()
+    {
+        Assert.SkipUnless(RunPerfTests,
+            "Set SIZESCANNER_RUN_PERF_TESTS=1 to run the C: fan-out configuration matrix.");
+        Assert.SkipUnless(Directory.Exists(MeasurementRoot), $"{MeasurementRoot} is not available.");
+        Assert.SkipUnless(VolumeParallelismPolicy.ShouldParallelize(MeasurementRoot),
+            $"{MeasurementRoot} is not SSD-class.");
+
+        var processors = Math.Min(Environment.ProcessorCount, 16);
+        (string Name, int Levels, int Degree)[] configs =
+        [
+            ("A sequential",      0, 1),
+            ("B root-only dop4",  1, 4),
+            ("C root-only dopN",  1, processors),
+            ("D two-level dopN",  2, processors),
+            ("E three-level dopN",3, processors)
+        ];
+
+        foreach (var config in configs)
+        {
+            var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
+            var budget = new ScanTreeBudget(
+                maxDegreeOfParallelism: config.Degree,
+                parallelFanOutLevels: config.Levels);
+
+            var samples = new List<TimeSpan>(capacity: 2);
+            long total = 0;
+            for (var round = 0; round < 2; round++)
+                samples.Add(MeasureScan(engine, budget, out total));
+
+            output.WriteLine(
+                $"{config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
+                $"median={Median(samples).TotalSeconds:F2}s total={total:N0}");
+        }
+    }
+
+    private static TimeSpan MeasureScan(
+        DirectoryWalkEngine engine, ScanTreeBudget budget, out long total)
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = engine.Scan(MeasurementRoot, isDriveScan: true, CancellationToken.None, onProgress: null, ScanTreeBudget.Default);
+        var result = engine.Scan(
+            MeasurementRoot, isDriveScan: true, CancellationToken.None,
+            onProgress: null, budget);
         stopwatch.Stop();
 
         total = result.Total;

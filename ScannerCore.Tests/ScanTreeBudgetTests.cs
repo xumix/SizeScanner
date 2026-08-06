@@ -24,9 +24,9 @@ public sealed class ScanTreeBudgetTests
     }
 
     [Fact]
-    public void Budget_defaults_to_two_fan_out_levels()
+    public void Budget_defaults_to_one_fan_out_level()
     {
-        Assert.Equal(2, new ScanTreeBudget().ParallelFanOutLevels);
+        Assert.Equal(1, new ScanTreeBudget().ParallelFanOutLevels);
     }
 
     [Fact]
