@@ -1,290 +1,548 @@
-<!-- refreshed: 2026-07-16 -->
+<!-- refreshed: 2026-08-06 -->
 # Architecture
 
-**Analysis Date:** 2026-07-16
+**Analysis Date:** 2026-08-06
 
 ## System Overview
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         Process Entry Points                             │
-├───────────────────────────────────┬──────────────────────────────────────┤
-│ Avalonia desktop application      │ Development console harness          │
-│ `SizeScanner.Avalonia/Program.cs` │ `ScannerConsole/Program.cs`          │
-└─────────────────┬─────────────────┴──────────────────┬───────────────────┘
-                  │                                    │
-                  ▼                                    │
-┌──────────────────────────────────────────────────────┴───────────────────┐
-│                     Application / Presentation Layer                    │
-│ `SizeScanner.Avalonia/ViewModels/` · `Views/` · `Charting/`             │
-│ `SizeScanner.Avalonia/Abstractions/` · `Services/`                      │
-└─────────────────────────────────────┬────────────────────────────────────┘
-                                      │ project reference
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         Filesystem Scan Core                             │
-│ `ScannerCore/DriveScanner.cs` → selector → walk engine → native scanner │
-│ Tree and progress contracts: `ScannerCore/FsItem.cs`, `ScanProgress.cs` │
-└─────────────────────────────────────┬────────────────────────────────────┘
-                                      │ Win32 / NT native calls
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Windows filesystem and storage APIs                                     │
-│ `kernel32.dll` · `ntdll.dll` · local filesystem · `%AppData%`           │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     Windows Desktop Presentation                            │
+├──────────────────────┬────────────────────────┬──────────────────────────────┤
+│ Avalonia views/XAML  │ MVVM orchestration     │ Custom chart rendering       │
+│ `SizeScanner.        │ `SizeScanner.          │ `SizeScanner.Avalonia/        │
+│ Avalonia/Views/`     │ Avalonia/ViewModels/`  │ Charting/` + `Views/          │
+│                      │                        │ SunburstChartControl.cs`       │
+└──────────┬───────────┴────────────┬───────────┴──────────────┬───────────────┘
+           │ bindings/commands      │ interfaces               │ FsItem input
+           ▼                        ▼                          ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                  Application Services and Adapters                           │
+│ `SizeScanner.Avalonia/Abstractions/` + `SizeScanner.Avalonia/Services/`      │
+│ scan scheduling, settings, dialogs, drive discovery, elevation, file actions│
+└──────────────────────────────┬───────────────────────────────────────────────┘
+                               │ project reference / `IScanService`
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                  Filesystem Scan Domain and Engine                           │
+│ `ScannerCore/`                                                               │
+│ scan facade → engine selection → native cursor → bounded directory walker    │
+│ → exact totals plus a bounded `FsItem` snapshot                              │
+└───────────────┬──────────────────────────┬───────────────────────────────────┘
+                │                          │
+                ▼                          ▼
+┌────────────────────────────┐  ┌──────────────────────────────────────────────┐
+│ Windows filesystem APIs    │  │ Local application state / side effects       │
+│ `kernel32.dll`, `ntdll.dll`│  │ `%AppData%\SizeScanner\settings.avalonia.json`│
+│ NTFS/volume metadata       │  │ Explorer, recycle bin, permanent deletion    │
+└────────────────────────────┘  └──────────────────────────────────────────────┘
+
+         `ScannerConsole/` ───────────────► `ScannerCore/`
+         test projects ──────────────────► their production project(s)
 ```
 
-The solution is a Windows-only layered desktop application. `ScannerCore/` owns scan semantics and native enumeration, while `SizeScanner.Avalonia/` owns composition, user interaction, chart transformation, and rendering. `ScannerConsole/` is an alternate manual entry point over the same scan core. Both test projects depend inward on production projects, as declared in `SizeScanner.slnx`.
+The solution is an acyclic set of five projects declared in `SizeScanner.slnx`.
+`ScannerCore/` owns the filesystem model and all native scanning. The Avalonia
+application references that library and divides desktop behavior into views,
+view-models, charting code, service contracts, and Windows/Avalonia service
+implementations. `ScannerConsole/` is a manual scan/performance entry point, not
+part of the production UI.
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| Desktop bootstrap | Starts Avalonia on an STA thread and configures the desktop lifetime | `SizeScanner.Avalonia/Program.cs` |
-| Composition root | Registers service, view-model, and window singletons and resolves the main window | `SizeScanner.Avalonia/App.axaml.cs` |
-| Main orchestration VM | Owns drive discovery, scan lifecycle, cancellation, progress, display options, inaccessible paths, and settings snapshot | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
-| Chart interaction VM | Owns chart scope, hover state, context targets, deletion actions, and layout rebuilds | `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` |
-| UI service boundary | Defines mockable contracts for scanning, settings, dialogs, drives, folder selection, elevation, and filesystem actions | `SizeScanner.Avalonia/Abstractions/` |
-| UI service implementations | Adapts Avalonia and Windows facilities to the abstraction layer | `SizeScanner.Avalonia/Services/` |
-| Scan facade | Chooses drive versus directory semantics, tracks totals and inaccessible paths, and throttles progress reports | `ScannerCore/DriveScanner.cs` |
-| Engine selection | Selects the first capable scan engine and permits fallback after non-cancellation failures | `ScannerCore/ScanEngineSelector.cs` |
-| Directory walk engine | Recursively builds the tree and gates top-level parallel traversal by volume type | `ScannerCore/DirectoryWalkEngine.cs` |
-| Native enumerator | Enumerates one directory with `NtQueryDirectoryFile` and converts records to `FsItem` children | `ScannerCore/DirectoryScanner.cs` |
-| Scan domain tree | Represents directories, files, parent links, sizes, and inaccessible-directory state | `ScannerCore/FsItem.cs` |
-| Chart transformation | Converts an `FsItem` subtree into bounded, filtered, colored sunburst segments | `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` |
-| Chart rendering | Caches Avalonia geometries and draws the sunburst and hover outline | `SizeScanner.Avalonia/Views/SunburstChartControl.cs` |
-| Console harness | Exercises directory scanning and reports elapsed time and inaccessible paths | `ScannerConsole/Program.cs` |
+| Desktop bootstrap | Starts the STA Avalonia desktop lifetime | `SizeScanner.Avalonia/Program.cs` |
+| Composition root | Registers singleton application services, view-models, and the main window | `SizeScanner.Avalonia/App.axaml.cs` |
+| Main window | Hosts toolbar, chart, progress/status, and inaccessible-path pane | `SizeScanner.Avalonia/Views/MainWindow.axaml` |
+| Main orchestration VM | Owns root scan commands, cancellation, progress, settings snapshot, drives, and inaccessible-path display | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
+| Chart interaction VM | Owns chart scope, layout, hover/context state, scoped rescans, and deletion workflows | `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` |
+| Scan adapter | Moves synchronous core scans off the UI thread and distinguishes root state from throwaway scope scans | `SizeScanner.Avalonia/Services/ScanService.cs` |
+| Chart builder | Converts an `FsItem` tree into capped, filtered, ring-indexed sunburst segments | `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` |
+| Chart model/hit testing | Stores immutable segment layout and builds per-ring indexes for polar hit testing | `SizeScanner.Avalonia/Charting/SunburstChart.cs`, `SizeScanner.Avalonia/Charting/SunburstHitTest.cs` |
+| Chart control | Caches Avalonia geometries and brushes, renders segments, hover outline, and center total | `SizeScanner.Avalonia/Views/SunburstChartControl.cs` |
+| Scan facade | Normalizes drive/directory scans, progress, inaccessible metadata, and synthetic drive entries | `ScannerCore/DriveScanner.cs` |
+| Engine strategy | Defines scan-engine equivalence and ordered fallback selection | `ScannerCore/IScanEngine.cs`, `ScannerCore/ScanEngineSelector.cs` |
+| Directory engine | Chooses allocation/logical sizing and SSD-gated top-level fan-out | `ScannerCore/DirectoryWalkEngine.cs` |
+| Native enumeration | Streams Windows directory records through a cursor/sink protocol | `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryEntryCursor.cs` |
+| Bounded tree walk | Computes exact totals while retaining a depth/width/node-bounded snapshot | `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/BoundedChildCollector.cs` |
+| Scan domain model | Represents files, directories, aggregates, parent links, denied directories, and hidden descendants | `ScannerCore/FsItem.cs` |
+| Settings persistence | Loads/saves the AOT-safe JSON settings DTO under the current user's application data | `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`, `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs` |
+| Windows actions | Provides Explorer selection, recycle/permanent deletion, drive enumeration, and UAC relaunch behind interfaces | `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`, `SizeScanner.Avalonia/Services/DriveProvider.cs`, `SizeScanner.Avalonia/Services/WindowsElevationService.cs` |
 
 ## Pattern Overview
 
-**Overall:** Layered MVVM application with ports/adapters around UI and platform operations, plus a reusable scan-engine strategy.
+**Overall:** Layered MVVM desktop application with ports/adapters at the UI
+boundary and a strategy-based, streaming scan engine in a separate core library.
 
 **Key Characteristics:**
-- Dependency direction is presentation and harness → `ScannerCore/`; `ScannerCore/ScannerCore.csproj` has no project or package dependencies.
-- `SizeScanner.Avalonia/App.axaml.cs` is the composition root; constructor injection supplies interfaces to view-models and UI-facing services.
-- `MainWindowViewModel` orchestrates application state, while `ChartViewModel` isolates visualization scope and context-action policy in `SizeScanner.Avalonia/ViewModels/`.
-- Scan implementations conform to `IScanEngine` in `ScannerCore/IScanEngine.cs`; `ScanEngineSelector` provides an ordered strategy/fallback seam.
-- The scan result is a mutable `FsItem` tree shared from scanning through charting; chart segments retain source-node references through `SizeScanner.Avalonia/Charting/SunburstSegment.cs`.
-- Views use compiled Avalonia bindings from `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`; code-behind handles lifecycle and pointer mechanics, while view-models own policy and commands.
+- Keep the project dependency graph one-way: UI, console, and tests depend on
+  `ScannerCore/`; `ScannerCore/` never depends on Avalonia.
+- Use constructor-injected contracts from `SizeScanner.Avalonia/Abstractions/`
+  to isolate view-models from dialogs, storage pickers, drives, elevation, file
+  mutation, settings persistence, and scan scheduling.
+- Keep Windows native directory/volume calls in `ScannerCore/DirectoryScanner.cs`
+  and `ScannerCore/VolumeParallelismPolicy.cs`.
+- Treat `FsItem` as the shared boundary model between scanning, chart building,
+  interaction, and tests.
+- Build a bounded retained snapshot, not a complete in-memory filesystem tree:
+  `ScannerCore/ScanTreeBudget.cs` limits retained nodes, children, depth,
+  inaccessible paths, and top-level worker count.
+- Re-scan a selected directory for drill-down detail rather than retaining
+  unbounded navigation history; `ChartViewModel` owns at most the root tree and
+  current scope tree.
+- Keep chart layout independent from the Avalonia control. Charting files produce
+  records and geometry inputs; `SunburstChartControl` performs actual rendering.
+- Preserve native AOT and trimming compatibility through compiled XAML bindings,
+  explicit DI registration, and generated JSON metadata.
 
 ## Layers
 
-**Executable Bootstrap:**
-- Purpose: Enter the process, initialize the UI framework, and build the dependency graph.
-- Location: `SizeScanner.Avalonia/Program.cs`, `SizeScanner.Avalonia/App.axaml.cs`, `ScannerConsole/Program.cs`
-- Contains: STA desktop startup, service registration, main-window resolution, and console harness startup.
-- Depends on: Avalonia desktop lifetime in `SizeScanner.Avalonia/Program.cs`; `ScannerCore` and Spectre.Console in `ScannerConsole/Program.cs`.
-- Used by: The operating system or `dotnet run`.
+**Desktop Host and Composition:**
+- Purpose: Start Avalonia and assemble the concrete object graph.
+- Location: `SizeScanner.Avalonia/Program.cs`, `SizeScanner.Avalonia/App.axaml`,
+  `SizeScanner.Avalonia/App.axaml.cs`
+- Contains: Process entry point, global styles/data templates, and DI registrations.
+- Depends on: Avalonia desktop lifetime, Microsoft DI, application services,
+  view-models, and views.
+- Used by: The packaged Windows executable.
 
-**Presentation and Application Orchestration:**
-- Purpose: Translate user actions into scan, chart, navigation, delete, and persistence operations.
-- Location: `SizeScanner.Avalonia/Views/`, `SizeScanner.Avalonia/ViewModels/`
-- Contains: XAML views, minimal code-behind, CommunityToolkit-generated commands/properties, and custom rendering.
-- Depends on: Contracts in `SizeScanner.Avalonia/Abstractions/`, chart types in `SizeScanner.Avalonia/Charting/`, and domain types in `ScannerCore/`.
-- Used by: The Avalonia application lifetime configured in `SizeScanner.Avalonia/App.axaml.cs`.
+**Views and Rendering:**
+- Purpose: Declare visual structure and translate pointer/window lifecycle events
+  into view-model operations.
+- Location: `SizeScanner.Avalonia/Views/`
+- Contains: Compiled AXAML, minimal code-behind, and `SunburstChartControl`.
+- Depends on: Avalonia, `SizeScanner.Avalonia/ViewModels/`, and
+  `SizeScanner.Avalonia/Charting/`.
+- Used by: `SizeScanner.Avalonia/App.axaml.cs` and `SizeScanner.Avalonia/ViewLocator.cs`.
+- Rule: Keep scan, filesystem, and context-menu policy out of views. Delegate
+  policy to view-models and `ChartNodeRules`.
 
-**UI Platform Adapters:**
-- Purpose: Hide concrete Avalonia and Windows operations behind testable interfaces.
-- Location: `SizeScanner.Avalonia/Abstractions/`, `SizeScanner.Avalonia/Services/`
-- Contains: `IScanService`, `ISettingsStore`, `IFileSystemActions`, `IDialogService`, `IFolderPicker`, `IDriveProvider`, `IElevationService`, and `ITopLevelProvider` plus implementations.
-- Depends on: Avalonia APIs, Windows process/filesystem APIs, JSON source generation, and `ScannerCore`.
-- Used by: `MainWindowViewModel`, `ChartViewModel`, and other service adapters.
+**View-Models:**
+- Purpose: Hold observable UI state, commands, cancellation ownership, and
+  application workflow coordination.
+- Location: `SizeScanner.Avalonia/ViewModels/`
+- Contains: `MainWindowViewModel`, `ChartViewModel`, and `ViewModelBase`.
+- Depends on: UI abstraction interfaces, charting types, models, and `ScannerCore`.
+- Used by: AXAML compiled bindings and view code-behind.
+- Rule: `MainWindowViewModel` owns root-scan/settings state;
+  `ChartViewModel` owns chart scope/interaction/delete state.
 
-**Chart Domain and Layout:**
-- Purpose: Apply display policy to a scan tree and create renderable geometry metadata.
+**Charting Domain:**
+- Purpose: Transform scan trees into a bounded display model and answer
+  presentation-specific node, color, threshold, tooltip, and hit-test questions.
 - Location: `SizeScanner.Avalonia/Charting/`
-- Contains: threshold calculation, synthetic-node rules, segment construction, color selection, ring layout, indexed hit testing, and tooltip formatting.
-- Depends on: `ScannerCore/FsItem.cs` and Avalonia primitive types such as `Color`, `Point`, and `Size`.
-- Used by: `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/Views/ChartView.axaml.cs`, and `SizeScanner.Avalonia/Views/SunburstChartControl.cs`.
+- Contains: Builder, segment/chart records, ring layout, hit testing, display
+  metadata, node rules, threshold rules, palette, and tooltip formatting.
+- Depends on: `ScannerCore/FsItem.cs` and lightweight Avalonia geometry/color types.
+- Used by: `ChartViewModel`, `ChartView`, and `SunburstChartControl`.
+- Rule: Use `ChartDisplayMetadata`, `ChartNodeRules`, and `FilterThreshold`; do
+  not duplicate synthetic names or threshold formulas.
 
-**Scan Orchestration and Domain:**
-- Purpose: Define stable scan semantics and produce an `FsItem` tree independently of the UI.
+**Application Ports:**
+- Purpose: Define mockable boundaries around operating-system and framework
+  services used by view-models.
+- Location: `SizeScanner.Avalonia/Abstractions/`
+- Contains: `IScanService`, `ISettingsStore`, `IDriveProvider`,
+  `IFileSystemActions`, `IElevationService`, `IFolderPicker`, `IDialogService`,
+  and `ITopLevelProvider`.
+- Depends on: Small DTO/domain types only; `IScanService` intentionally exposes
+  `ScannerCore` scan types.
+- Used by: View-model constructors and concrete services.
+
+**Application Adapters:**
+- Purpose: Implement the ports using Avalonia, Windows, JSON, and `ScannerCore`.
+- Location: `SizeScanner.Avalonia/Services/`
+- Contains: Scan scheduling, settings storage, dialog/folder picker, top-level
+  registration, drive discovery, elevation, and file actions.
+- Depends on: `SizeScanner.Avalonia/Abstractions/`, Avalonia APIs, Windows/.NET
+  filesystem APIs, and `ScannerCore`.
+- Used by: DI registrations in `SizeScanner.Avalonia/App.axaml.cs`.
+
+**Scan Domain and Infrastructure:**
+- Purpose: Enumerate the filesystem, calculate exact reachable sizes, record
+  inaccessible paths, and return a bounded `FsItem` hierarchy.
 - Location: `ScannerCore/`
-- Contains: facade, engine contract and selector, directory walk, native enumeration, storage policy, progress DTO, synthetic drive metadata, path helpers, and humanized display formatting.
-- Depends on: .NET base libraries and Windows native APIs only.
-- Used by: `SizeScanner.Avalonia/Services/ScanService.cs`, `ScannerConsole/Program.cs`, and `ScannerCore.Tests/`.
+- Contains: Public scan facade/model/contracts plus internal native cursor,
+  bounded walker, retention collector, and volume policy.
+- Depends on: .NET runtime and Windows native APIs only; it has no package
+  dependencies.
+- Used by: `SizeScanner.Avalonia/Services/ScanService.cs`,
+  `ScannerConsole/Program.cs`, and both test projects.
 
-**Verification:**
-- Purpose: Exercise scan-core behavior and Avalonia chart/service/view-model behavior separately.
+**Executable Harness:**
+- Purpose: Run a scan without Avalonia for manual correctness, progress, and
+  performance checks.
+- Location: `ScannerConsole/`
+- Contains: A single Spectre.Console entry point.
+- Depends on: `ScannerCore/` and Spectre.Console.
+- Used by: Developers; it is not referenced by the production application.
+
+**Tests:**
+- Purpose: Verify native parsing boundaries, bounded/parallel scan semantics,
+  chart layout and caps, view-model workflows, and service adapters.
 - Location: `ScannerCore.Tests/`, `SizeScanner.Avalonia.Tests/`
-- Contains: xUnit tests, temporary-directory helpers, test trees, fakes, smoke tests, and platform integration tests.
-- Depends on: Production projects through references in `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- Used by: Local `dotnet test` commands and CI workflows under `.github/workflows/` and `.gitlab-ci.yml`.
+- Contains: xUnit tests plus local synthetic sources, fake services, temporary
+  directories, and tree factories.
+- Depends on: Corresponding production projects; the UI tests also reference
+  `ScannerCore/`.
+- Used by: Local and GitHub CI test runs.
 
 ## Data Flow
 
-### Desktop Startup
+### Primary Drive or Directory Scan
 
-1. `Program.Main` enters on an STA thread and starts the classic desktop lifetime (`SizeScanner.Avalonia/Program.cs:11`).
-2. Avalonia loads application XAML and calls `App.OnFrameworkInitializationCompleted` (`SizeScanner.Avalonia/App.axaml.cs:19`).
-3. `App.ConfigureServices` registers singleton adapters, view-models, and `MainWindow` (`SizeScanner.Avalonia/App.axaml.cs:32`).
-4. Dependency injection constructs `MainWindow`; its code-behind assigns `MainWindowViewModel` as `DataContext` (`SizeScanner.Avalonia/Views/MainWindow.axaml.cs:14`).
-5. On window open, `TopLevelProvider` is registered and `MainWindowViewModel.Initialize` loads ready drives and applies the already-loaded settings snapshot (`SizeScanner.Avalonia/Views/MainWindow.axaml.cs:22`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:109`).
+1. A toolbar command is selected through compiled AXAML bindings
+   (`SizeScanner.Avalonia/Views/MainWindow.axaml:26`).
+2. `MainWindowViewModel.ScanTargetAsync` creates the root cancellation source,
+   switches the UI into scanning state, and calls `IScanService.RunAsync`
+   (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:195`).
+3. `ScanService.RunAsync` replaces the root `DriveScanner` and executes its
+   synchronous scan on the thread pool (`SizeScanner.Avalonia/Services/ScanService.cs:18`).
+4. `DriveScanner` distinguishes drive from directory semantics, initializes
+   progress/inaccessible state, and invokes the selected engine with a
+   `ScanTreeBudget` (`ScannerCore/DriveScanner.cs:58`,
+   `ScannerCore/DriveScanner.cs:76`).
+5. `ScanEngineSelector` chooses the first capable engine, preserves cancellation,
+   and falls back after non-cancellation engine failures
+   (`ScannerCore/ScanEngineSelector.cs:29`).
+6. `DirectoryWalkEngine` creates a `DirectoryScanner` using allocation size for
+   drive scans or logical size for directory scans, asks
+   `VolumeParallelismPolicy` whether top-level fan-out is safe, and delegates to
+   `BoundedDirectoryWalker` (`ScannerCore/DirectoryWalkEngine.cs:26`).
+7. `DirectoryScanner` opens a Windows directory handle and streams
+   `FILE_DIRECTORY_INFORMATION` batches from `NtQueryDirectoryFile` into an
+   `IDirectoryEntrySink` (`ScannerCore/DirectoryScanner.cs:81`,
+   `ScannerCore/DirectoryScanner.cs:153`).
+8. `BoundedDirectoryWalker` walks post-order, calculates exact totals, records a
+   capped inaccessible-path sample, and retains only budgeted children through
+   `BoundedChildCollector` (`ScannerCore/BoundedDirectoryWalker.cs:28`,
+   `ScannerCore/BoundedDirectoryWalker.cs:63`).
+9. For a drive scan, `DriveScanner` prepends `[Free space]` and `[Inaccessible]`
+   nodes using `DriveScanMetadata` (`ScannerCore/DriveScanner.cs:63`).
+10. The view-model records inaccessible paths, passes the root into
+    `ChartViewModel.SetScan`, and requests a refresh
+    (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:229`).
+11. `ChartViewModel` chooses the display root, computes the threshold, and invokes
+    `SunburstChartBuilder.Build` (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:89`).
+12. The builder returns a capped `SunburstChart`; `SunburstChartControl` caches
+    segment geometries and renders the rings (`SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs:36`,
+    `SizeScanner.Avalonia/Views/SunburstChartControl.cs:99`).
 
-### Primary Scan Path
+### Scoped Drill-Down
 
-1. A drive button, Browse command, or Rescan command reaches `MainWindowViewModel.ScanTargetAsync` (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:165`).
-2. The view-model creates a new cancellation source and a UI-context `Progress<ScanProgress>`, then calls `IScanService.RunAsync` (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:168`).
-3. `ScanService` records rescan state, constructs a fresh `DriveScanner`, and moves synchronous scanning to a thread-pool task (`SizeScanner.Avalonia/Services/ScanService.cs:15`).
-4. `DriveScanner` selects drive or directory behavior and delegates to its configured `IScanEngine` (`ScannerCore/DriveScanner.cs:54`, `ScannerCore/DriveScanner.cs:66`).
-5. `ScanEngineSelector` evaluates engines in order; the default `DriveScanner` currently registers `DirectoryWalkEngine` as the always-capable fallback (`ScannerCore/DriveScanner.cs:24`, `ScannerCore/ScanEngineSelector.cs:29`).
-6. `DirectoryWalkEngine` creates the root `FsItem`, determines whether the target volume is SSD-class, scans each directory, and recurses through child directories (`ScannerCore/DirectoryWalkEngine.cs:27`).
-7. `DirectoryScanner` opens each directory with `CreateFile`, enumerates records via `NtQueryDirectoryFile`, skips reparse points unless offline, and emits child `FsItem` objects (`ScannerCore/DirectoryScanner.cs:82`, `ScannerCore/DirectoryScanner.cs:138`).
-8. The walk attaches parent pointers, sums child sizes into directories, marks denied directories with `Items == null`, and records their paths (`ScannerCore/DirectoryWalkEngine.cs:99`, `ScannerCore/FsItem.cs:27`).
-9. A drive scan prepends `[Free space]` and `[Inaccessible]` nodes through `DriveScanMetadata`; a directory scan returns the raw root (`ScannerCore/DriveScanner.cs:54`, `ScannerCore/DriveScanMetadata.cs:20`).
-10. `MainWindowViewModel` populates inaccessible-path state, gives the tree to `ChartViewModel`, rebuilds the chart, and restores idle UI state (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:190`).
+1. `ChartView` hit-tests a left click and asks `ChartViewModel.TryScopeAtAsync`
+   to scope the resolved node (`SizeScanner.Avalonia/Views/ChartView.axaml.cs:105`).
+2. `ChartNodeRules.IsScopable` rejects files, denied directories, and synthetic
+   or fully empty nodes while allowing bounded nodes with hidden descendants
+   (`SizeScanner.Avalonia/Charting/ChartNodeRules.cs:39`).
+3. `ChartViewModel` constructs the absolute path and calls
+   `IScanService.RunScopeAsync`, preserving allocation-size semantics when the
+   root originated from a drive scan
+   (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:123`).
+4. `ScanService.RunScopeAsync` uses a fresh throwaway `DriveScanner`; it does not
+   mutate root target, root scan kind, or root inaccessible state
+   (`SizeScanner.Avalonia/Services/ScanService.cs:36`).
+5. The new scope tree replaces the prior scope tree and the layout is rebuilt.
+   No scope history is retained (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:137`).
 
-### Progress and Cancellation Flow
+### Delete and Refresh
 
-1. `DirectoryWalkEngine.WalkContext` maintains the scanned-byte total with `Interlocked` and reports the current directory before enumeration (`ScannerCore/DirectoryWalkEngine.cs:132`).
-2. `DriveScanner.OnEngineProgress` updates public scan state under `_progressLock` and throttles non-final callbacks to 300 ms (`ScannerCore/DriveScanner.cs:86`).
-3. `Progress<ScanProgress>` posts updates to the captured UI synchronization context, where `MainWindowViewModel.OnScanProgress` updates the status and percentage (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:220`).
-4. Cancellation is requested by `CancelScanCommand`, observed by the walk and parallel-loop token, and normalized to a cancelled UI state (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:149`, `ScannerCore/DirectoryWalkEngine.cs:37`).
+1. A right-click target is resolved by `ChartView`, while
+   `ChartNodeRules.SuppressesContextMenu` prevents operations on synthetic
+   segments (`SizeScanner.Avalonia/Views/ChartView.axaml.cs:75`).
+2. `ChartViewModel` confirms through `IDialogService` and delegates the operation
+   to `IFileSystemActions.DeleteAsync`
+   (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:275`).
+3. `WindowsFileSystemActions` chooses file/directory and recycle/permanent APIs,
+   returning a `DeleteResult` instead of leaking exceptions into the view-model
+   (`SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs:22`).
+4. A successful delete removes the node and subtracts its size from ancestors.
+   A delete in an independently rescanned scope marks the cached root stale;
+   returning to root triggers a root rescan
+   (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:316`).
 
-### Scan Tree to Sunburst Rendering
+### Settings Lifecycle
 
-1. `ChartViewModel.SetScan` retains the real scan root and creates a shallow drive-root clone used only to hide `[Free space]` while retaining `[Inaccessible]` (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:49`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:261`).
-2. `MainWindowViewModel.RefreshChart` converts the selected filter index through `FilterThreshold.PercentFromIndex` and passes free-space visibility to `ChartViewModel` (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:248`).
-3. `ChartViewModel.RebuildLayout` selects the scoped or base root, computes the byte threshold, and calls `SunburstChartBuilder.Build` (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:65`).
-4. `SunburstChartBuilder` computes visible sizes, aggregates filtered items and segment overflow, enforces global/per-sector caps, and returns an immutable-facing `SunburstChart` (`SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs:35`).
-5. Compiled binding passes `ChartViewModel.Layout` to `SunburstChartControl.Chart` (`SizeScanner.Avalonia/Views/ChartView.axaml:21`).
-6. `SunburstChartControl` caches geometry per chart/bounds pair and draws segments, hover outline, and center label (`SizeScanner.Avalonia/Views/SunburstChartControl.cs:98`).
-
-### Pointer Interaction and Context Actions
-
-1. `ChartView` receives pointer events and delegates radial hit testing to `SunburstChartControl` (`SizeScanner.Avalonia/Views/ChartView.axaml.cs:66`).
-2. `SunburstHitTest` resolves a ring, binary-searches that ring's lazily built actionable-segment index, and returns the source-bearing segment (`SizeScanner.Avalonia/Charting/SunburstHitTest.cs:10`, `SizeScanner.Avalonia/Charting/SunburstChart.cs:21`).
-3. `ChartViewModel` owns hover text, scope transitions, synthetic-node suppression, and context-target paths (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:81`).
-4. Delete commands confirm through `IDialogService`, execute through `IFileSystemActions`, remove the node from the in-memory tree, decrement ancestor sizes, and rebuild the layout (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs:163`).
-
-### Settings Persistence
-
-1. `MainWindowViewModel` loads one mutable `UserSettings` snapshot in its constructor through `ISettingsStore` (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:36`).
-2. Display-option and pane changes mutate that snapshot and save it; window dimensions and splitter distance are captured on close (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:266`, `SizeScanner.Avalonia/Views/MainWindow.axaml.cs:30`).
-3. `JsonSettingsStore` persists source-generated JSON at `%AppData%\SizeScanner\settings.avalonia.json` and falls back to defaults on load failure (`SizeScanner.Avalonia/Services/JsonSettingsStore.cs:14`, `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs:8`).
+1. `MainWindowViewModel` loads one mutable `UserSettings` snapshot during
+   construction (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:36`).
+2. Initialization applies drive choices and display/window settings; option
+   changes update the snapshot and persist it
+   (`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:128`,
+   `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs:312`).
+3. `MainWindow` captures final dimensions on close
+   (`SizeScanner.Avalonia/Views/MainWindow.axaml.cs:30`).
+4. `JsonSettingsStore` serializes through the source-generated context to
+   `%AppData%\SizeScanner\settings.avalonia.json`
+   (`SizeScanner.Avalonia/Services/JsonSettingsStore.cs:16`,
+   `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs:9`).
 
 **State Management:**
-- Application state lives in singleton `MainWindowViewModel` and `ChartViewModel` instances registered by `SizeScanner.Avalonia/App.axaml.cs`.
-- Scan state is per-run: `ScanService` replaces its `DriveScanner` for each call, while `MainWindowViewModel` replaces its `CancellationTokenSource` and root.
-- The `FsItem` tree is intentionally mutable so deletion can update parents and sizes in place in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
-- Render caches are control-instance state in `SizeScanner.Avalonia/Views/SunburstChartControl.cs`; the chart model lazily caches per-ring indexes in `SizeScanner.Avalonia/Charting/SunburstChart.cs`.
+- DI registrations in `SizeScanner.Avalonia/App.axaml.cs` are singletons for the
+  desktop lifetime.
+- `MainWindowViewModel` owns root scan state, root cancellation, drive list,
+  inaccessible-path presentation, and the in-memory settings snapshot.
+- `ChartViewModel` owns the base/scoped tree references, root-staleness marker,
+  display options, chart layout, scope cancellation, hover, and context target.
+- `ScanService` owns root rescan metadata and the most recent root
+  `DriveScanner`; scope scans deliberately use independent scanners.
+- `FsItem.Parent` links support path reconstruction and ancestor size updates.
+  `Items == null` means a directory could not be opened; an empty list means it
+  was opened but retained no children. `HasUnretainedChildren` preserves
+  drill-down eligibility for bounded snapshots.
 
 ## Key Abstractions
 
-**`IScanEngine`:**
-- Purpose: Define equivalent tree-building behavior for interchangeable scan engines.
-- Examples: `ScannerCore/IScanEngine.cs`, `ScannerCore/DirectoryWalkEngine.cs`, `ScannerCore/ScanEngineSelector.cs`
-- Pattern: Strategy plus ordered chain-of-responsibility fallback.
+**`IScanEngine` and `ScanResult`:**
+- Purpose: Define equivalent scan implementations and their complete output.
+- Examples: `ScannerCore/IScanEngine.cs`,
+  `ScannerCore/DirectoryWalkEngine.cs`,
+  `ScannerCore/ScanEngineSelector.cs`
+- Pattern: Strategy plus ordered fallback/decorator-like selector.
 
-**`IScanService`:**
-- Purpose: Bridge asynchronous UI orchestration to synchronous scan-core execution and expose rescan metadata.
-- Examples: `SizeScanner.Avalonia/Abstractions/IScanService.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`
-- Pattern: Application service adapter.
+**Directory Cursor/Source/Sink:**
+- Purpose: Separate native batched enumeration from traversal and make the
+  walker testable with synthetic sources.
+- Examples: `ScannerCore/DirectoryEntryCursor.cs`,
+  `ScannerCore/DirectoryScanner.cs`,
+  `ScannerCore.Tests/SyntheticDirectoryEntrySource.cs`
+- Pattern: Pull-based cursor feeding a callback sink; interfaces are internal
+  and exposed to tests with `ScannerCore/AssemblyInfo.cs`.
 
-**UI Service Interfaces:**
-- Purpose: Keep view-model policy independent from concrete dialogs, pickers, elevation, drive discovery, settings storage, and filesystem actions.
-- Examples: `SizeScanner.Avalonia/Abstractions/`, `SizeScanner.Avalonia/Services/`
-- Pattern: Ports and adapters with constructor injection.
+**`ScanTreeBudget`:**
+- Purpose: Make memory, retained depth/width, inaccessible-path sampling, and
+  top-level parallelism explicit inputs.
+- Examples: `ScannerCore/ScanTreeBudget.cs`,
+  `ScannerCore/BoundedDirectoryWalker.cs`
+- Pattern: Immutable policy value with validated constructor defaults.
 
 **`FsItem`:**
-- Purpose: Carry scan hierarchy, aggregate sizes, access-denied state, and parent-based path reconstruction.
-- Examples: `ScannerCore/FsItem.cs`, `ScannerCore/DriveScanMetadata.cs`
-- Pattern: Mutable composite tree with parent links.
+- Purpose: Carry the scan hierarchy and exact aggregate sizes across projects.
+- Examples: `ScannerCore/FsItem.cs`,
+  `ScannerCore/DriveScanMetadata.cs`
+- Pattern: Mutable tree node during construction/deletion, with immutable name
+  and kind and explicit aggregate-node identity.
 
-**`SunburstChart`:**
-- Purpose: Hold bounded render segments and provide lazy per-ring indexes for efficient interaction.
-- Examples: `SizeScanner.Avalonia/Charting/SunburstChart.cs`, `SizeScanner.Avalonia/Charting/SunburstSegment.cs`
-- Pattern: Presentation model with internal query cache.
+**UI Service Interfaces:**
+- Purpose: Keep view-model behavior independently testable and constrain
+  framework/OS access to adapters.
+- Examples: `SizeScanner.Avalonia/Abstractions/IScanService.cs`,
+  `SizeScanner.Avalonia/Abstractions/IFileSystemActions.cs`,
+  `SizeScanner.Avalonia/Abstractions/ISettingsStore.cs`
+- Pattern: Ports and adapters with constructor injection.
 
-**Synthetic Metadata Rules:**
-- Purpose: Give drive-scan and chart-only synthetic nodes stable names, indices, visibility, scoping, and context-menu semantics.
-- Examples: `ScannerCore/DriveScanMetadata.cs`, `SizeScanner.Avalonia/Charting/ChartDisplayMetadata.cs`, `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`
-- Pattern: Centralized metadata and policy helpers.
+**`SunburstChart` / `SunburstSegment`:**
+- Purpose: Separate chart layout data from rendering and interaction.
+- Examples: `SizeScanner.Avalonia/Charting/SunburstChart.cs`,
+  `SizeScanner.Avalonia/Charting/SunburstSegment.cs`
+- Pattern: Immutable records with a lazily built per-ring hit-test index.
+
+**Central Metadata and Rules:**
+- Purpose: Give synthetic nodes and display policy one source of truth.
+- Examples: `ScannerCore/DriveScanMetadata.cs`,
+  `SizeScanner.Avalonia/Charting/ChartDisplayMetadata.cs`,
+  `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`,
+  `SizeScanner.Avalonia/Charting/FilterThreshold.cs`
+- Pattern: Stateless policy/metadata classes shared by builder, view-model, and
+  tests.
 
 ## Entry Points
 
-**Avalonia Desktop:**
+**Production Desktop:**
 - Location: `SizeScanner.Avalonia/Program.cs`
-- Triggers: Windows process startup or `dotnet run --project SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`.
-- Responsibilities: Establish STA execution, configure Avalonia platform detection, Inter font, trace logging, and classic desktop lifetime.
+- Triggers: Launching `SizeScanner.Avalonia.exe`.
+- Responsibilities: Enter STA, configure Avalonia platform/font/trace logging,
+  and start the classic desktop lifetime.
 
-**Avalonia Composition:**
+**Application Composition:**
 - Location: `SizeScanner.Avalonia/App.axaml.cs`
 - Triggers: Avalonia framework initialization.
-- Responsibilities: Load application resources, configure dependency injection, and construct the main window.
+- Responsibilities: Build the service provider and resolve the main window.
 
-**Console Scan Harness:**
+**Main Window Lifecycle:**
+- Location: `SizeScanner.Avalonia/Views/MainWindow.axaml.cs`
+- Triggers: Main window construction, open, and close.
+- Responsibilities: Set `DataContext`, register the top-level owner, initialize
+  drives/settings, and persist final dimensions.
+
+**Manual Console Harness:**
 - Location: `ScannerConsole/Program.cs`
 - Triggers: `dotnet run --project ScannerConsole/ScannerConsole.csproj -- <path>`.
-- Responsibilities: Validate directory scanning outside the UI and display duration, total size, and inaccessible paths.
+- Responsibilities: Run a directory scan on a worker thread and display status,
+  totals, retained-node count, and inaccessible paths.
 
-**Public Scan API:**
+**Public Core API:**
 - Location: `ScannerCore/DriveScanner.cs`
-- Triggers: Calls to `ScanDrive` or `ScanDirectory` from UI, console, or tests.
-- Responsibilities: Normalize scan setup, apply drive-specific metadata, expose progress, and retain inaccessible paths.
+- Triggers: Calls to `ScanDrive` or `ScanDirectory` from any host.
+- Responsibilities: Normalize scan mode, select the engine, throttle progress,
+  expose inaccessible metadata, and decorate drive roots.
+
+**Test Entry Points:**
+- Location: `ScannerCore.Tests/ScannerCore.Tests.csproj`,
+  `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`
+- Triggers: `dotnet test`.
+- Responsibilities: Discover and execute xUnit v3 tests for the core and UI
+  architecture.
 
 ## Architectural Constraints
 
-- **Platform:** Every project targets `net10.0-windows`; production scanning requires `kernel32.dll` and `ntdll.dll` through `ScannerCore/DirectoryScanner.cs` and `ScannerCore/VolumeParallelismPolicy.cs`.
-- **Dependency direction:** Keep filesystem scan logic in `ScannerCore/`; `ScannerCore/ScannerCore.csproj` must not reference the Avalonia project.
-- **Size semantics:** Drive scans use allocation size and directory scans use logical end-of-file size; the flag flows from `DriveScanner` through `DirectoryWalkEngine` into `DirectoryScanner`.
-- **Reparse semantics:** Skip reparse points unless `FILE_ATTRIBUTE_OFFLINE`; preserve this contract for every implementation of `IScanEngine` in `ScannerCore/IScanEngine.cs`.
-- **Access-denied semantics:** Represent an inaccessible directory as `FsItem.Items == null` and also add its path to `ScanResult.Inaccessible`.
-- **Threading:** UI commands start on the Avalonia thread; `ScanService` uses `Task.Run`; only directory subtrees are parallelized, and only when `VolumeParallelismPolicy` reports no seek penalty.
-- **Progress:** `DriveScanner` serializes updates with `_progressLock` and throttles callbacks; consumers should use `IProgress<ScanProgress>` rather than reading scan fields as a polling protocol.
-- **AOT/trimming:** The UI project enables native AOT, trimming, and compiled bindings in `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`; serialization uses `SizeScannerJsonContext`.
-- **Global state:** DI registrations are singleton-scoped in `SizeScanner.Avalonia/App.axaml.cs`; no mutable process-wide static scan state is present.
-- **Circular dependencies:** Project references are acyclic: tests/UI/console point toward `ScannerCore`; `ScannerCore` points only to framework libraries.
-- **Chart capacity:** `SunburstChartBuilder` caps output at 100,000 total segments and 100 per sector in `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`.
+- **Platform:** Every project targets `net10.0-windows`; native enumeration and
+  volume detection require Windows APIs. Keep the Windows boundary explicit in
+  `ScannerCore/` and `SizeScanner.Avalonia/Services/`.
+- **Threading:** Avalonia starts on an STA UI thread. `ScanService` moves scans
+  to `Task.Run`; progress uses `Progress<ScanProgress>` to return updates to the
+  captured UI context. Only root-level subdirectories fan out, only when
+  `VolumeParallelismPolicy` reports no seek penalty, and worker/channel sizes
+  come from `ScanTreeBudget`.
+- **Scan serialization:** Root and scope workflows must not race a shared,
+  stateful root `DriveScanner`. `MainWindowViewModel.IsBusy`,
+  `ChartViewModel.IsScopeScanning`, and `IsRootScanInProgress` enforce this.
+- **Memory bound:** Exact byte totals do not imply a complete tree.
+  `BoundedDirectoryWalker` retains a bounded subset and aggregates hidden
+  children. Consumers must preserve `HasUnretainedChildren` and aggregate
+  semantics.
+- **Size semantics:** Drive-rooted scans use allocation size; ordinary directory
+  scans use logical end-of-file size. Scope rescans under drive trees pass
+  `preferAllocatedSize: true`.
+- **Reparse points:** Native parsing skips reparse points unless the entry has
+  `FILE_ATTRIBUTE_OFFLINE`, preserving OneDrive online-only placeholders.
+- **Denied directories:** Failure to open a directory is represented by
+  `FsItem.Items == null` and a capped inaccessible-path sample, not by dropping
+  the node or aborting the scan.
+- **AOT/trimming:** `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj` enables
+  native AOT, trimming, single-file publish, and compiled bindings. Use
+  source-generated serializers such as
+  `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs`; avoid reflection or
+  dynamic activation in production paths.
+- **Global state:** Application services and view-models are DI singletons for
+  one desktop lifetime. The only mutable static state in normal flows is
+  framework/property metadata and immutable singleton policies/defaults; scan
+  state remains instance-owned.
+- **Circular dependencies:** The project graph is acyclic. Within the UI,
+  views depend on view-model/chart types, view-models depend on abstractions and
+  charting, services implement abstractions, and `App` alone composes concrete
+  types.
+- **Synthetic identity:** Use `DriveScanMetadata` for core drive entries and
+  `ChartDisplayMetadata`/`ChartNodeRules` for chart-only entries. Synthetic
+  segments do not represent actionable filesystem paths.
 
 ## Anti-Patterns
 
-### Filesystem Enumeration in the UI Layer
+### Native Filesystem Calls from UI Code
 
-**What happens:** Adding scan traversal or native enumeration under `SizeScanner.Avalonia/` bypasses the reusable scan contract.
-**Why it's wrong:** It reverses the project dependency boundary, makes console/test behavior diverge, and risks changing drive-versus-directory size semantics.
-**Do this instead:** Add filesystem scan behavior under `ScannerCore/` and expose it through `ScannerCore/IScanEngine.cs` or `ScannerCore/DriveScanner.cs`.
+**What happens:** A view or view-model directly calls Win32 enumeration or
+volume APIs.
+**Why it's wrong:** It reverses the dependency boundary, makes UI behavior
+harder to test, and can duplicate drive/directory size and reparse-point rules.
+**Do this instead:** Put scan-native logic in `ScannerCore/DirectoryScanner.cs`
+or `ScannerCore/VolumeParallelismPolicy.cs`; expose UI operations through an
+interface in `SizeScanner.Avalonia/Abstractions/` and an adapter in
+`SizeScanner.Avalonia/Services/`.
 
-### Duplicated Synthetic Names or Threshold Math
+### Treating Aggregate/Synthetic Nodes as Paths
 
-**What happens:** Hard-coded `[Free space]`, `[Inaccessible]`, `[Filtered]`, `[Other]`, or `0.0025 × index` logic can drift between tree, chart, and interaction code.
-**Why it's wrong:** Node identity controls visibility, coloring, scoping, and destructive-action suppression.
-**Do this instead:** Use `ScannerCore/DriveScanMetadata.cs`, `SizeScanner.Avalonia/Charting/ChartDisplayMetadata.cs`, `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`, and `SizeScanner.Avalonia/Charting/FilterThreshold.cs`.
+**What happens:** `[Other]`, `[Filtered]`, `[Free space]`, `[Inaccessible]`, or
+an `FsItemKind.Aggregate` is passed to scope, Explorer, or delete behavior.
+**Why it's wrong:** These nodes represent metadata or multiple hidden paths and
+cannot be mapped to one safe filesystem target.
+**Do this instead:** Route all policy through
+`SizeScanner.Avalonia/Charting/ChartNodeRules.cs` and central names through
+`ScannerCore/DriveScanMetadata.cs` and
+`SizeScanner.Avalonia/Charting/ChartDisplayMetadata.cs`.
 
-### View-Owned Interaction Policy
+### Building an Unbounded Full Tree
 
-**What happens:** Deciding whether a node may scope, show a context menu, or be deleted directly in `ChartView.axaml.cs` duplicates domain/UI policy.
-**Why it's wrong:** Pointer mechanics become inseparable from policy and view-model tests cannot cover the behavior.
-**Do this instead:** Keep hit-event wiring in `SizeScanner.Avalonia/Views/ChartView.axaml.cs` and delegate decisions to `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` and `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`.
+**What happens:** Enumeration stores every file and directory or retains every
+scope visited.
+**Why it's wrong:** Wide/deep filesystems can exhaust managed memory and make
+chart layout unbounded.
+**Do this instead:** Stream entries through
+`ScannerCore/DirectoryEntryCursor.cs`, retain with
+`ScannerCore/BoundedChildCollector.cs`, enforce `ScanTreeBudget`, and replace
+rather than stack scope trees in
+`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
 
-### Reflection-Based Activation or Serialization
+### Concurrent Root Scans on the Singleton Service
 
-**What happens:** Runtime type discovery, unannotated reflection, or default reflection serialization may be removed by trimming or fail under native AOT.
-**Why it's wrong:** The production publish contract in `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj` enables both trimming and native AOT.
-**Do this instead:** Use explicit DI registration in `SizeScanner.Avalonia/App.axaml.cs`, compiled XAML bindings, and source-generated JSON metadata in `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs`.
+**What happens:** More than one workflow invokes `IScanService.RunAsync` while
+another root scan is active.
+**Why it's wrong:** `ScanService` replaces its `Scanner`, `LastTarget`, and
+`IsDriveScan`; `DriveScanner` also carries mutable progress/result state.
+**Do this instead:** Preserve the busy gates in
+`SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` and
+`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`; use
+`RunScopeAsync` for independent throwaway scope work.
+
+### Duplicating Chart Policy in Views
+
+**What happens:** AXAML or code-behind hard-codes threshold math, synthetic
+names, scoping eligibility, or context-menu rules.
+**Why it's wrong:** Builder, hit testing, and actions can disagree about the
+same segment.
+**Do this instead:** Keep event translation in
+`SizeScanner.Avalonia/Views/ChartView.axaml.cs` and policy in
+`FilterThreshold`, `ChartNodeRules`, `ChartDisplayMetadata`, and
+`ChartViewModel`.
 
 ## Error Handling
 
-**Strategy:** Convert expected boundary failures into safe result/state values, preserve cancellation, and permit engine fallback for implementation failures.
+**Strategy:** Preserve cancellation as control flow, convert expected filesystem
+limitations into explicit domain state/results, and handle user-facing failures
+at the application boundary.
 
 **Patterns:**
-- `ScanEngineSelector` rethrows `OperationCanceledException`, logs other engine failures to `Debug`, and tries the next capable engine in `ScannerCore/ScanEngineSelector.cs`.
-- Native directory open failure returns `null`; `DirectoryWalkEngine` maps that to `Items == null` and records the path in `ScannerCore/DirectoryWalkEngine.cs`.
-- Unknown storage characteristics fail closed to sequential traversal in `ScannerCore/VolumeParallelismPolicy.cs`.
-- Settings load failure returns a default `UserSettings` in `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`.
-- Delete failures become `DeleteResult` values and are displayed through `IDialogService` in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
-- UI cancellation is handled separately from scan failure in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`.
+- `OperationCanceledException` is rethrown by engine selection and handled only
+  by the workflow that owns the relevant cancellation token
+  (`ScannerCore/ScanEngineSelector.cs`,
+  `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`,
+  `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`).
+- A directory handle that cannot be opened becomes an inaccessible directory
+  with `Items == null`; it is sampled in `ScanResult.Inaccessible`
+  (`ScannerCore/BoundedDirectoryWalker.cs`).
+- A failed native enumeration batch becomes an `IOException` so
+  `ScanEngineSelector` can try a fallback engine
+  (`ScannerCore/BoundedDirectoryWalker.cs`,
+  `ScannerCore/ScanEngineSelector.cs`).
+- Scoped scan exceptions are displayed through `IDialogService`, while the
+  current chart remains unchanged
+  (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`).
+- File deletion catches exceptions in the Windows adapter and returns
+  `DeleteResult`; the view-model displays the error
+  (`SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`).
+- Settings load is fail-safe and returns defaults for missing, malformed, or
+  unreadable JSON (`SizeScanner.Avalonia/Services/JsonSettingsStore.cs`).
+- Elevation converts UAC cancellation and launch failures into a false result
+  plus optional error text
+  (`SizeScanner.Avalonia/Services/WindowsElevationService.cs`).
 
 ## Cross-Cutting Concerns
 
-**Logging:** Avalonia routes framework logs to trace in `SizeScanner.Avalonia/Program.cs`; native enumeration and engine fallback write diagnostics through `System.Diagnostics.Debug` in `ScannerCore/DirectoryScanner.cs` and `ScannerCore/ScanEngineSelector.cs`.
+**Logging:** Avalonia logs to trace from `SizeScanner.Avalonia/Program.cs`.
+Core engine fallback and native enumeration failures write diagnostic messages
+with `Debug.WriteLine` in `ScannerCore/ScanEngineSelector.cs` and
+`ScannerCore/DirectoryScanner.cs`. There is no application logging framework.
 
-**Validation:** Target existence is explicitly checked by `ScannerConsole/Program.cs`; UI target selection is constrained by `DriveProvider` and `AvaloniaFolderPicker`; filesystem and native failures are handled at service/engine boundaries.
+**Validation:** `ScanTreeBudget` validates every bound at construction;
+`DirectoryScanner` checks native statuses and record boundaries; chart builders
+clamp non-positive sizes and enforce both global and per-sector segment caps.
+User operations are guarded by node rules, busy state, cancellation tokens, and
+confirmation dialogs.
 
-**Authentication:** Not applicable. Elevation is optional Windows administrator relaunch behavior through `SizeScanner.Avalonia/Abstractions/IElevationService.cs` and `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
+**Authentication:** Not applicable. The application has no accounts or remote
+identity. Windows process identity is used only to detect administrator status
+and optionally relaunch with the `runas` verb.
 
-**Configuration:** Shared compilation defaults are in `Directory.Build.props`; package versions are centralized in `Directory.Packages.props`; the SDK is pinned by `global.json`.
+**Configuration:** Build/runtime platform settings are centralized in
+`Directory.Build.props`, `global.json`, project files, and
+`SizeScanner.Avalonia/app.manifest`. User display/window settings live in
+`UserSettings` and `JsonSettingsStore`.
+
+**Testing Boundaries:** Core native traversal is tested through internal cursor
+interfaces and synthetic sources (`ScannerCore.Tests/`). UI workflows are
+tested through abstraction fakes such as
+`SizeScanner.Avalonia.Tests/FakeScanService.cs`; chart algorithms are tested
+without rendering a window.
 
 ---
 
-*Architecture analysis: 2026-07-16*
+*Architecture analysis: 2026-08-06*

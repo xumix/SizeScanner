@@ -1,275 +1,267 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-07-16
-
-## Audit Baseline
-
-- Release build succeeds for `SizeScanner.slnx`; the core suite reports 31 passed and 1 skipped test from `ScannerCore.Tests/ScannerCore.Tests.csproj`, and the UI suite reports 64 passed tests from `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- Native AOT publication succeeds for `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`. Pull-request CI only builds the solution; native AOT publication is exercised by tag releases in `.github/workflows/release.yml`.
-- The skipped test is the only real-volume speed comparison and requires `SIZESCANNER_RUN_PERF_TESTS=1` in `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`.
-
-## Priority Summary
-
-1. **P0 — Make scan lifecycle single-flight and exception-safe.** Gate commands in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, capture each scanner locally in `SizeScanner.Avalonia/Services/ScanService.cs`, and restore UI state in a `finally` block.
-2. **P0 — Bound parallelism globally.** `ScannerCore/DirectoryWalkEngine.cs` recursively creates nested `Parallel.ForEach` loops despite the top-level-only contract in `AGENTS.md` and `docs/superpowers/plans/2026-06-17-scanner-optimization-phases-1-4.md`.
-3. **P0 — Harden native enumeration.** Validate every entry against `IO_STATUS_BLOCK.Information`, distinguish partial query failures from successful completion, and surface native errors from `ScannerCore/DirectoryScanner.cs`.
-4. **P1 — Correct disk accounting.** Track file identity to avoid hard-link double counting and stop presenting all `occupied - scanned` bytes as inaccessible in `ScannerCore/DriveScanner.cs`.
-5. **P1 — Make chart preprocessing scale with the render budget.** Avoid whole-directory candidate lists, full sorts, and a dictionary entry per node in `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`.
-6. **P1 — Replace name-based synthetic identity.** Real filesystem entries named `[Free space]`, `[Inaccessible]`, `[Filtered]`, or `[Other]` are misclassified by `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`.
-7. **P1 — Harden destructive actions.** Revalidate the target against the scan root immediately before deletion and remove stale context-menu targeting in `SizeScanner.Avalonia/Views/ChartView.axaml.cs`.
-8. **P1 — Add long-path and deep-tree support.** Native paths are neither extended with `\\?\` in `ScannerCore/DirectoryScanner.cs` nor opted into with `longPathAware` in `SizeScanner.Avalonia/app.manifest`; recursive walkers also retain stack-overflow risk.
-9. **P2 — Enforce release security and quality gates.** Add code signing, immutable action pins, an AOT publish check, analyzer enforcement, and coverage thresholds in `.github/workflows/` and `Directory.Build.props`.
-10. **P2 — Resolve unfinished fast-path work and documentation drift.** The MFT design in `docs/superpowers/specs/2026-06-17-mft-scan-engine-design.md` has no implementation, and the GitLab pipeline claimed by `AGENTS.md` is absent.
+**Analysis Date:** 2026-08-06
 
 ## Tech Debt
 
-**Scan lifecycle ownership:**
-- Issue: Scan commands are disabled only at the control layer in `SizeScanner.Avalonia/Views/MainWindow.axaml`; `BrowseCommand` and drive scan commands have no `CanExecute` guard in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, while keyboard bindings remain attached.
-- Files: `SizeScanner.Avalonia/Views/MainWindow.axaml`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`
-- Impact: A keyboard or programmatic command can overlap scans. The older operation can publish progress or a result after the newer one, dispose the newer cancellation source, and read inaccessible paths from the wrong `DriveScanner`.
-- Fix approach: Make `ScanTargetAsync` single-flight, cancel and await any prior operation, add `CanExecute = !IsScanning` to every scan command, and keep operation-scoped scanner/CTS/result objects rather than mutable service properties.
+**Synthetic chart entries are identified by user-visible names:**
+- Issue: `ChartNodeRules` treats any item named `[Free space]`, `[Inaccessible]`, `[Filtered]`, or `[Other]` as synthetic, while `SunburstChartBuilder` also chooses colors by those names. A real file or directory can legally use any of these names.
+- Files: `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`, `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`, `SizeScanner.Avalonia/Charting/ChartDisplayMetadata.cs`, `ScannerCore/DriveScanMetadata.cs`
+- Impact: Real filesystem objects with reserved-looking names receive synthetic colors and filtering rules, lose their context menu, and cannot be scoped even when they are directories. A real `[Free space]` item is also excluded from the chart's used-total calculation.
+- Fix approach: Extend `FsItemKind` or add explicit immutable metadata for every synthetic node; base chart policy on kind/reference/position rather than `Name`.
 
-**Mutable scanner service state:**
-- Issue: `ScanService.RunAsync` assigns `Scanner = new DriveScanner()` and the `Task.Run` lambda dereferences that property instead of a local variable.
-- Files: `SizeScanner.Avalonia/Services/ScanService.cs`, `SizeScanner.Avalonia/Abstractions/IScanService.cs`
-- Impact: Concurrent calls can execute against or expose the wrong scanner instance; `LastTarget`, `IsDriveScan`, and `Scanner` do not describe one atomic completed operation.
-- Fix approach: Capture `var scanner = new DriveScanner()` before scheduling, return an operation result containing root and metadata, and synchronize or reject concurrent service calls.
+**Mutable scanner state mixes orchestration and scan results:**
+- Issue: `DriveScanner` stores target, totals, progress plumbing, inaccessible paths, and drive occupancy on the scanner instance. `GetDisplayThreshold` depends on `_occupied`, which is not reset by `ScanDirectory`, and its zero-threshold directory behavior is codified by tests despite the method having no production callers.
+- Files: `ScannerCore/DriveScanner.cs`, `ScannerCore.Tests/DriveScannerTests.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`
+- Impact: Reusing a `DriveScanner` for a drive scan followed by a directory scan leaks prior drive occupancy into public progress/threshold APIs. The UI avoids this by replacing the scanner for each root scan, but direct consumers can receive stale values.
+- Fix approach: Return immutable scan metadata with the root, move progress state into a per-run context, reset all run-specific fields, and remove or redefine the unused `GetDisplayThreshold` API.
 
-**Public threshold API has stale and misleading state:**
-- Issue: `_occupied` is set only by `ScanDrive`; reusing one `DriveScanner` for a later directory scan leaves the previous drive value, and `GetDisplayThreshold` never includes actual free space.
-- Files: `ScannerCore/DriveScanner.cs`, `ScannerCore.Tests/DriveScannerTests.cs`
-- Impact: Direct consumers can receive a drive-based percentage for a directory scan. The production `ScanService` avoids this by constructing a new scanner, but the public API does not enforce that lifecycle.
-- Fix approach: Reset `_occupied` for every scan, rename or remove the unused threshold method, and compute chart thresholds exclusively through `SizeScanner.Avalonia/Charting/FilterThreshold.cs`.
+**Settings persistence is synchronous and non-atomic:**
+- Issue: Settings are written directly with `File.WriteAllText` from UI-triggered paths; load failures are swallowed and replaced with defaults.
+- Files: `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Views/MainWindow.axaml.cs`
+- Impact: A crash, power loss, or concurrent write can truncate the settings file. The next launch silently discards the user's settings, while a save failure during window close can escape through the UI lifecycle.
+- Fix approach: Serialize to a sibling temporary file, flush and atomically replace the destination, validate loaded values, and report or trace persistence failures without blocking window close.
 
-**Unfinished MFT engine seam:**
-- Issue: `ScanEngineSelector` registers only `DirectoryWalkEngine`; no `MftScanEngine`, `NtfsVolume`, parser, reader, or tree builder exists.
-- Files: `ScannerCore/DriveScanner.cs`, `ScannerCore/ScanEngineSelector.cs`, `docs/superpowers/specs/2026-06-17-mft-scan-engine-design.md`
-- Impact: Elevation can improve access but does not provide the advertised design's whole-volume acceleration; large NTFS scans remain syscall-per-directory walks.
-- Fix approach: Implement the parser and tree builder as pure tested components before raw-volume I/O, or explicitly defer/remove the draft fast-path promise.
+**Declared solution platforms do not match project runtime identifiers:**
+- Issue: The solution advertises `Any CPU`, `x64`, and `x86`, but every project fixes `RuntimeIdentifier` to `win-x64`, and release automation only publishes `win-x64`.
+- Files: `SizeScanner.slnx`, `ScannerCore/ScannerCore.csproj`, `ScannerConsole/ScannerConsole.csproj`, `ScannerCore.Tests/ScannerCore.Tests.csproj`, `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`, `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`, `.github/workflows/release.yml`
+- Impact: Selecting x86 or Any CPU does not produce the architecture implied by the solution configuration. Contributors can mistake untested configurations for supported ones.
+- Fix approach: Remove unsupported solution platforms or parameterize runtime identifiers and add matching build/publish coverage for every supported architecture.
 
-**Documentation and pipeline drift:**
-- Issue: `AGENTS.md` describes `.gitlab-ci.yml` and x86/x64 AnyCPU support, but no `.gitlab-ci.yml` is tracked and every project/release is fixed to `win-x64`.
-- Files: `AGENTS.md`, `ScannerCore/ScannerCore.csproj`, `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`, `.github/workflows/release.yml`
-- Impact: Contributors plan against nonexistent CI and unsupported architecture claims.
-- Fix approach: Restore and test the GitLab pipeline or remove the claim; document x64-only support or add separate RID builds and interop validation.
+**Inaccessible-path metadata is not fully surfaced:**
+- Issue: The core returns exact `InaccessibleCount` and `InaccessiblePathsTruncated`, but the UI only binds the sampled path collection. Directory scans label inaccessible size as `0 B` even though the size is unknown.
+- Files: `ScannerCore/IScanEngine.cs`, `ScannerCore/DriveScanner.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Views/MainWindow.axaml`
+- Impact: Users cannot tell that the list stopped at `ScanTreeBudget.MaxInaccessiblePaths`, and `0 B` can be read as a measured value rather than an unavailable estimate.
+- Fix approach: Expose shown/total counts and a truncation indicator in the view-model, and display “unknown” for directory-scan inaccessible size.
 
 ## Known Bugs
 
-**Unhandled scan failure leaves the UI in scanning state:**
-- Symptoms: Exceptions other than cancellation escape `ScanTargetAsync`; `IsScanning`, status text, and `_scanCts` are not restored.
-- Files: `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`
-- Trigger: A drive disappears, `DriveInfo` throws, native enumeration throws, or an engine exhausts all fallbacks.
-- Workaround: Restart the application; controls remain disabled because `IsScanning` stays true.
+**Root-scan failures leave the main window busy:**
+- Symptoms: `ScanTargetAsync` handles cancellation but not ordinary exceptions. When `_scan.RunAsync` faults, `Chart.IsRootScanInProgress` is reset, but `IsScanning`, status text, and `_scanCts` are not cleaned up; the exception can also escape an async command.
+- Files: `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`, `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`
+- Trigger: Scan a path whose enumeration starts successfully and later returns a native failure, or let any scan engine throw a non-cancellation exception.
+- Workaround: Restart the application; scope-side scans already contain the missing error-dialog and cleanup pattern in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
 
-**Overlapping scans can corrupt operation state:**
-- Symptoms: Progress, chart root, inaccessible paths, cancellation, and `Scanner` metadata can come from different scans.
-- Files: `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`, `SizeScanner.Avalonia/Views/MainWindow.axaml`
-- Trigger: Invoke Ctrl+O or another command path while a scan is active; commands themselves do not reject execution.
-- Workaround: Do not invoke scan key bindings until the active scan finishes.
+**Hard links are counted once per directory entry:**
+- Symptoms: Drive and directory totals can exceed the unique bytes represented on disk. On a drive scan this can push progress past 100% and force the synthetic inaccessible size to zero.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/DriveScanner.cs`
+- Trigger: Scan an NTFS volume containing multiple hard links to the same file record.
+- Workaround: None in the current scanner; interpret totals as directory-entry totals rather than unique file-record usage.
 
-**Native query failures silently produce partial trees:**
-- Symptoms: Any `NtQueryDirectoryFile` status other than success or `STATUS_NO_MORE_FILES` only writes to `Debug`; the already collected list is returned as a successful directory.
-- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryWalkEngine.cs`
-- Trigger: Mid-enumeration I/O errors, filesystem-driver errors, device removal, or unsupported native status.
-- Workaround: None in the release UI; affected bytes are omitted without adding the directory to `DriveScanner.Inaccessible`.
+**The `[Inaccessible]` size conflates multiple causes:**
+- Symptoms: The drive chart labels `occupied bytes - enumerated allocation bytes` as inaccessible, although the remainder also includes filesystem metadata, reserved space, snapshots, hard-link over/under-counting, and races during the scan.
+- Files: `ScannerCore/DriveScanner.cs`, `ScannerCore/DriveScanMetadata.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`
+- Trigger: Scan any full drive; the discrepancy is especially visible on volumes with substantial NTFS metadata, reserved storage, or hard links.
+- Workaround: Treat the red sector as an unexplained remainder, not a direct sum of the paths in the inaccessible pane.
 
-**Hard links can inflate totals:**
-- Symptoms: Each directory entry contributes its allocation size, with no file-ID deduplication; drive progress can exceed 100% and `[Inaccessible]` clamps to zero.
-- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryWalkEngine.cs`, `ScannerCore/DriveScanner.cs`
-- Trigger: Scan a volume containing multiple hard links to the same file record.
-- Workaround: Interpret totals as path-entry totals rather than unique on-disk allocation.
+**Long native paths can be reported as inaccessible:**
+- Symptoms: Deep paths may fail at `CreateFile` even when the current user can access them because the P/Invoke path is not converted to extended-length form and the application manifest does not declare `longPathAware`.
+- Files: `ScannerCore/DirectoryScanner.cs`, `SizeScanner.Avalonia/app.manifest`
+- Trigger: Scan a tree whose resolved path exceeds legacy Windows path limits on a system where long-path behavior is not enabled for this executable.
+- Workaround: Start from a deeper subdirectory or use a shorter mount/path.
 
-**Synthetic names collide with legal filesystem names:**
-- Symptoms: Real entries named `[Free space]`, `[Inaccessible]`, `[Filtered]`, or `[Other]` receive synthetic colors/rules, may be excluded from used totals, cannot be scoped, and lose their context menu.
-- Files: `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`, `SizeScanner.Avalonia/Charting/FilterThreshold.cs`, `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`
-- Trigger: Scan any directory containing an entry with one of the reserved display names.
-- Workaround: Rename the real filesystem entry.
-
-**Context menu can retarget a destructive action:**
-- Symptoms: `_lastRightClickPosition` is never cleared; context-menu opening re-hit-tests that stale coordinate and can override a keyboard-selected or previously prepared target.
-- Files: `SizeScanner.Avalonia/Views/ChartView.axaml.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`
-- Trigger: Open a context menu through keyboard/programmatic input after a prior right-click or after layout changes.
-- Workaround: Right-click the intended segment immediately before choosing delete.
-
-**Deep or long paths can be reported as inaccessible:**
-- Symptoms: Native `CreateFile` receives ordinary paths without an extended-length prefix, the application manifest has no `longPathAware` declaration, and both scanning and chart processing recurse.
-- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryWalkEngine.cs`, `SizeScanner.Avalonia/app.manifest`, `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`
-- Trigger: Deep trees exceed effective Win32 path limits or recursion depth.
-- Workaround: Scan a shallower subtree or enable host/OS long-path policy; recursion has no workaround for pathological depth.
+**Real objects with synthetic names lose normal behavior:**
+- Symptoms: A directory named `[Other]` or `[Filtered]` cannot be scoped or deleted from the chart; files named `[Free space]` or `[Inaccessible]` are colored and counted as synthetic entries.
+- Files: `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`, `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`, `SizeScanner.Avalonia/Charting/FilterThreshold.cs`
+- Trigger: Create a filesystem object whose name equals one of the chart metadata constants and scan its parent.
+- Workaround: Rename the object outside SizeScanner.
 
 ## Security Considerations
 
-**Unsafe native buffer parsing:**
-- Risk: Fixed offsets, `NextEntryOffset`, and `FileNameLength` are trusted without checking `IO_STATUS_BLOCK.Information`; malformed output from a filesystem driver can cause out-of-bounds reads and process crashes.
-- Files: `ScannerCore/DirectoryScanner.cs`
-- Current mitigation: The source is a kernel API and the rented buffer is 1 MiB, but neither condition establishes per-record bounds.
-- Recommendations: Pass the returned byte count into `ParseBuffer`, validate alignment/ranges/UTF-16 lengths, stop on malformed records, and fuzz a span-based pure parser.
+**Offline reparse points are followed without tag or cycle validation:**
+- Risk: The scanner skips ordinary reparse points but follows every reparse point that also has `FILE_ATTRIBUTE_OFFLINE`. That attribute is treated as proof of a safe OneDrive placeholder, yet no reparse tag, target, volume identity, or visited file ID is checked. A crafted or unusual offline reparse point can escape the selected subtree or create a traversal cycle, causing unintended disclosure in the chart or denial of service.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`
+- Current mitigation: Reparse points without the offline bit are skipped, retained object count is bounded, and scans run as the invoking user unless the user explicitly relaunches elevated.
+- Recommendations: Query and allowlist the intended cloud-placeholder reparse tags, track directory identity to break cycles, and preserve a “do not follow” default for unknown tags.
 
-**Elevated destructive operations:**
-- Risk: Relaunching as administrator gives delete operations full elevated rights, while the delete path is reconstructed from mutable filesystem names and revalidated only with `File.Exists`/`Directory.Exists`.
-- Files: `SizeScanner.Avalonia/Services/WindowsElevationService.cs`, `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`
-- Current mitigation: A confirmation dialog precedes recycle-bin and permanent deletion, and reparse entries are generally omitted during scanning.
-- Recommendations: Show persistent elevated-state UI, canonicalize and verify the target remains under the scanned root, reject synthetic nodes inside the command itself, and revalidate file identity immediately before deletion.
+**Destructive actions run inside the fully elevated process:**
+- Risk: After “Relaunch as Administrator,” scanning, Explorer launch, recycle-bin deletion, and permanent recursive deletion all execute with administrator rights. The selected path is derived from a point-in-time scan and is not revalidated for identity or reparse status immediately before deletion.
+- Files: `SizeScanner.Avalonia/Services/WindowsElevationService.cs`, `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/app.manifest`
+- Current mitigation: The default manifest uses `asInvoker`, elevation requires a UAC prompt, synthetic entries suppress their context menus, and permanent deletion requires a confirmation dialog.
+- Recommendations: Keep destructive actions unelevated or isolate privileged scanning in a narrow helper; before deletion, re-check type, attributes, and stable file identity, and reject newly introduced reparse points.
 
-**Unsigned release artifacts:**
-- Risk: Users cannot verify publisher identity, UAC displays an unknown publisher, and a replaced release binary is harder to distinguish from an official build.
-- Files: `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`
-- Current mitigation: GitHub hosts the generated zip and release notes.
-- Recommendations: Authenticode-sign the executable, publish SHA-256 checksums/SBOM, and verify signing before release upload.
+**Release executables are not signed:**
+- Risk: Users cannot verify an Authenticode publisher for a tool that can relaunch elevated and permanently delete files; replacement or tampering is harder to distinguish from an official release.
+- Files: `.github/workflows/release.yml`, `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`, `SizeScanner.Avalonia/app.manifest`
+- Current mitigation: GitHub creates a release from a tagged repository revision and publishes a zip through GitHub-hosted infrastructure.
+- Recommendations: Sign the executable and release archive, publish checksums or provenance attestations, and verify signatures before creating the release.
 
-**Mutable CI dependencies and automatic dependency merging:**
-- Risk: GitHub Actions use moving major-version tags, and patch/minor Dependabot updates are automatically queued for merge.
+**GitHub Actions dependencies use mutable major-version tags:**
+- Risk: Build, CodeQL, auto-merge, artifact, and release jobs execute third-party action code referenced by tags such as `@v3`, `@v4`, and `@v7`; a compromised or moved tag changes trusted CI code without a repository diff.
 - Files: `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, `.github/workflows/codeql.yml`, `.github/workflows/dependabot-auto-merge.yml`
-- Current mitigation: GitHub permissions are mostly scoped per workflow, and branch protection can gate auto-merge outside repository code.
-- Recommendations: Pin third-party actions to immutable commit SHAs, require all Windows build/test/publish checks before auto-merge, and limit release workflow dependencies.
+- Current mitigation: Workflow permissions are scoped per job, Dependabot tracks action updates, and release write permission is confined to the tag workflow.
+- Recommendations: Pin every action to a reviewed commit SHA, retain a version comment, and have Dependabot update those pins through reviewed pull requests.
 
 ## Performance Bottlenecks
 
-**Recursive nested parallelism:**
-- Problem: Every parallel child recursively calls `WalkDirectory(..., parallelChildren: true)`, creating nested `Parallel.ForEach` regions throughout the tree.
-- Files: `ScannerCore/DirectoryWalkEngine.cs`, `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`
-- Cause: The top-level parallel flag is propagated into descendants instead of switching each worker to a sequential subtree walk.
-- Improvement path: Use one bounded producer/consumer work queue or parallelize only root subdirectories; test the global maximum concurrency with an injected scanner.
+**Parallel root fan-out materializes every child-directory name:**
+- Problem: The parallel path reads the entire root directory into `List<string> directoryNames` before any bounded channel fan-out begins.
+- Files: `ScannerCore/BoundedDirectoryWalker.cs`
+- Cause: `WalkChildrenInParallel` separates enumeration from worker dispatch instead of streaming names directly into the bounded work channel.
+- Improvement path: Feed names to the channel while enumerating, retain only channel capacity plus active work, and add a parallel million-directory allocation test.
 
-**One-megabyte buffer per concurrent enumeration:**
-- Problem: Each active `DirectoryScanner.Scan` rents and pins a 1 MiB array; recursive parallelism can create many simultaneous rentals and leave large arrays retained in the shared pool.
-- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryWalkEngine.cs`
-- Cause: Per-call buffers combine with globally unbounded nested fan-out.
-- Improvement path: Bound workers globally, reuse one buffer per worker, and benchmark smaller buffers against syscall count.
+**Traversal depth is recursive and not bounded by retained depth:**
+- Problem: `MaxRetainedDepth` limits the returned object graph, but the scanner still recursively calls `WalkDirectory` for every physical directory level to compute exact totals. A sufficiently deep tree can exhaust the process stack.
+- Files: `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/ScanTreeBudget.cs`, `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs`
+- Cause: Filesystem traversal and retained-tree construction share the same recursive call stack.
+- Improvement path: Use an explicit stack of traversal frames and keep `MaxRetainedDepth` solely as a retention policy.
 
-**Render cap does not cap preprocessing:**
-- Problem: `MaxSegments` and `MaxSegmentsPerSector` limit emitted segments only after `CountRings`, `ComputeDisplayedSizes`, candidate collection, and candidate sorting traverse the tree.
-- Files: `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`, `SizeScanner.Avalonia.Tests/SunburstChartBuilderCapTests.cs`
-- Cause: `EmitRing` creates a candidate tuple for every visible child and sorts the full list even when at most 100 segments can be emitted for a sector.
-- Improvement path: Select only the largest budgeted children with a bounded heap/partial selection, aggregate the remainder during one pass, and avoid `_displayedSize` entries for nodes that cannot render.
+**Cancellation cannot interrupt an in-flight native directory query:**
+- Problem: Cancellation is checked between batches and directories, but `NtQueryDirectoryFile` is invoked synchronously without a cancellable handle operation.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`
+- Cause: The native cursor uses a blocking synchronous handle and receives no cancellation signal.
+- Improvement path: Use cancellable overlapped/native I/O where practical, close/cancel the handle on cancellation, and document bounded cancellation latency for local and network paths.
 
-**Full in-memory filesystem tree:**
-- Problem: Every entry retains an `FsItem`, name string, parent pointer, and directory `List<FsItem>` before the chart adds dictionaries, segments, geometry, brushes, and indexes.
-- Files: `ScannerCore/FsItem.cs`, `ScannerCore/DirectoryWalkEngine.cs`, `SizeScanner.Avalonia/Views/SunburstChartControl.cs`
-- Cause: Scanning and visualization have no streaming, compaction, or spill-to-disk layer.
-- Improvement path: Measure bytes per node, finalize children into compact arrays, intern only proven-repetitive metadata, and build summarized chart data without duplicating the complete tree.
+**Worker memory scales by one 1 MiB buffer per degree:**
+- Problem: The default parallel scan rents one root buffer plus one 1 MiB buffer for each worker. `MaxDegreeOfParallelism` has no upper bound, and channel capacities also multiply the supplied value by two.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/ScanTreeBudget.cs`
+- Cause: Buffer size and worker count are coupled directly to public budget input.
+- Improvement path: Cap the supported degree, use a validated capacity calculation, and benchmark smaller native buffers before exposing larger degrees.
 
-**Real performance gate is opt-in:**
-- Problem: The speed test is skipped in normal local and CI runs.
-- Files: `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`, `.github/workflows/dotnet-desktop.yml`
-- Cause: It scans `C:\` and depends on machine storage.
-- Improvement path: Add deterministic injected-I/O concurrency benchmarks and schedule the real-volume test on a dedicated Windows performance runner.
+**Large recursive deletes cannot be cancelled or coordinated with scans:**
+- Problem: Permanent directory deletion runs in a background task with no cancellation token while toolbar scan actions remain enabled because `MainWindowViewModel.IsBusy` excludes `ChartViewModel.IsDeleting`.
+- Files: `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Views/MainWindow.axaml`
+- Cause: Deletion status is treated as display state rather than an application-wide operation lock.
+- Improvement path: Include deletion in shared busy state, prevent duplicate delete commands, disable scans/navigation during mutation, and support cancellation where the underlying operation permits it.
 
 ## Fragile Areas
 
-**Native directory record layout:**
-- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore.Tests/DirectoryScannerParsingTests.cs`
-- Why fragile: Correctness depends on hard-coded offsets, structure packing, NTSTATUS behavior, synchronous handle semantics, and x64 marshalling.
-- Safe modification: Keep parsing pure and bounds-checked; validate x86/x64 layouts if multiple architectures are claimed; preserve a live Windows integration test.
-- Test coverage: Existing tests enumerate normal temp directories but do not exercise malformed records, odd lengths, partial native failures, offline placeholders, or reparse points.
+**Parallel worker failure coordination can hang:**
+- Files: `ScannerCore/BoundedDirectoryWalker.cs`
+- Why fragile: The supervisor awaits the producer before observing `Task.WhenAll(workers)`. If all workers fault while the bounded work channel is full, the producer can wait forever for a reader, the results writer is never completed, and the fan-in loop cannot finish.
+- Safe modification: Link an internal cancellation source to producer/workers, observe worker failure concurrently with production, complete both channels exactly once, and preserve the original exception.
+- Test coverage: `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` covers equivalence, concurrency, and pre-cancelled scans but does not inject worker faults or assert completion under partial/full worker failure.
 
-**Tree mutation after delete:**
-- Files: `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`
-- Why fragile: A hidden-free-space chart root shares child objects with the real scan root, while deletion removes from both lists and subtracts size through parent links.
-- Safe modification: Centralize mutation in a tree service, enforce parent/list invariants, and rebuild derived roots from the authoritative tree after changes.
-- Test coverage: Top-level deletion is covered, but scoped deletion, repeated deletion, concurrent filesystem changes, and mutation failure are not.
+**Unsafe native buffer parsing trusts ABI and buffer contents:**
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore.Tests/DirectoryScannerParsingTests.cs`, `ScannerCore.Tests/DirectoryEntryCursorTests.cs`
+- Why fragile: `ParseBuffer` uses hard-coded offsets and follows `NextEntryOffset` without validating `IO_STATUS_BLOCK.Information`, record bounds, alignment, even UTF-16 byte length, or monotonic progress. A runtime/OS ABI mismatch or malformed native result can read outside the returned data.
+- Safe modification: Define the native layout once, parse only the reported byte count, validate every offset and filename span before dereference, and fail the current directory with a diagnostic rather than risking memory corruption.
+- Test coverage: Tests exercise valid real-kernel buffers only; there are no malformed/truncated buffer cases or architecture-specific layout tests.
 
-**Synthetic entry position and identity:**
-- Files: `ScannerCore/DriveScanMetadata.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`
-- Why fragile: Some code relies on fixed indices while other code relies on names, and ordinary `FsItem` instances carry no explicit synthetic kind.
-- Safe modification: Add a typed node kind/flags field and use it consistently; reserve indices only at the drive-root boundary.
-- Test coverage: Synthetic happy paths are covered, but collisions with real names and reordered/missing entries are not.
+**Filesystem changes during a scan are not snapshot-consistent:**
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/DriveScanner.cs`
+- Why fragile: Enumeration, child recursion, and drive free-space reads happen at different times without VSS or stable file identities. Rename, delete, growth, or replacement can produce inconsistent totals; a mid-stream native cursor failure aborts the whole scan instead of recording one inaccessible directory.
+- Safe modification: Define snapshot semantics explicitly, degrade per-directory race failures into recorded partial/unavailable nodes where safe, and optionally add a VSS-backed engine for consistent drive scans.
+- Test coverage: No tests mutate a tree during enumeration or force `DirectoryBatchResult.Failed` after successful batches.
 
-**Error reporting and diagnostics:**
-- Files: `ScannerCore/ScanEngineSelector.cs`, `ScannerCore/DirectoryScanner.cs`, `SizeScanner.Avalonia/Program.cs`, `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`
-- Why fragile: Engine failures and native errors go only to debug/trace output, while settings load errors are swallowed and scan exceptions have no user-facing path.
-- Safe modification: Introduce structured logging and typed scan warnings/errors, then map recoverable failures to the UI without discarding diagnostics.
-- Test coverage: No tests assert release-visible diagnostics or recovery from scan/settings-save failures.
+**Chart deletion and scanning use separate concurrency guards:**
+- Files: `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Services/ScanService.cs`
+- Why fragile: Root and scope scans explicitly avoid racing the shared scanner, but deletion is excluded from `IsBusy`; a scan can observe a half-deleted tree, and multiple delete commands can target stale context state.
+- Safe modification: Introduce one operation coordinator for root scan, scope scan, and filesystem mutation, with command `CanExecute` rules and cancellation ownership.
+- Test coverage: `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs` checks deletion status and results but not concurrent scan/delete or duplicate delete execution.
+
+**Error reporting is inconsistent and mostly non-durable:**
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/ScanEngineSelector.cs`, `SizeScanner.Avalonia/Program.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`
+- Why fragile: Native and engine failures go to `Debug.WriteLine`/trace, scope failures show a dialog, and root failures are unhandled. Release users have no durable diagnostic record.
+- Safe modification: Add a small structured logging abstraction with a per-user log, normalize root/scope error handling, and include native status/path context without exposing more filesystem data than necessary.
+- Test coverage: Root-scan fault handling and release logging paths are untested.
 
 ## Scaling Limits
 
-**Filesystem nodes:**
-- Current capacity: One managed tree node per filesystem entry in `ScannerCore/FsItem.cs`; no explicit node limit exists.
-- Limit: Memory grows O(entries), and recursive traversal grows O(depth) in `ScannerCore/DirectoryWalkEngine.cs`.
-- Scaling path: Add memory benchmarks for million-node synthetic trees, iterative traversal, compact finalized child storage, and optional summary-mode scans.
+**Retained scan tree:**
+- Current capacity: Defaults retain at most 100,000 nodes, 99 children per retained directory, six retained levels, 10,000 inaccessible path samples, and four top-level workers.
+- Files: `ScannerCore/ScanTreeBudget.cs`, `ScannerCore/BoundedChildCollector.cs`, `ScannerCore/BoundedDirectoryWalker.cs`
+- Limit: Retained object count is bounded, but total traversal time remains proportional to all reachable entries; parallel root names and traversal call-stack depth are not bounded by the same budget.
+- Scaling path: Stream parallel work, use iterative traversal, expose measured budget telemetry, and reject unsafe budget maxima.
 
-**Chart segments and candidates:**
-- Current capacity: Global render cap 100,000 and per-root-sector budget 100 in `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`.
-- Limit: Candidate lists and sorting remain unbounded by those caps; geometry caching remains O(emitted segments) in `SizeScanner.Avalonia/Views/SunburstChartControl.cs`.
-- Scaling path: Apply budgets before sorting/allocation and expose a visible truncation indicator with measured memory/time budgets.
+**Sunburst layout and rendering:**
+- Current capacity: The builder declares 100,000 total segments and 100 segments per sector; the control also caches one geometry and brush per emitted segment.
+- Files: `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs`, `SizeScanner.Avalonia/Views/SunburstChartControl.cs`, `SizeScanner.Avalonia/Charting/SunburstChart.cs`
+- Limit: Layout, sorting, geometry creation, and cache memory scale with emitted segments; there is no runtime timing/memory telemetry to detect UI stalls.
+- Scaling path: Keep practical segment budgets substantially below the global cap, benchmark worst-case layouts, and move expensive rebuild work off the UI thread if the cap is raised.
 
-**Inaccessible-path reporting:**
-- Current capacity: Every failed path is stored as a full string in `DirectoryWalkEngine.WalkContext`.
-- Limit: A volume with widespread access failures consumes memory proportional to the number and length of paths and then duplicates them into `MainWindowViewModel.InaccessiblePaths`.
-- Scaling path: Cap displayed samples, retain counts and aggregate size/reasons, and support exporting full diagnostics on demand.
+**Inaccessible-path samples:**
+- Current capacity: The exact count is a `long`, but only 10,000 paths are retained by default.
+- Files: `ScannerCore/ScanTreeBudget.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`
+- Limit: The UI neither states the cap nor exposes the exact total/truncation flag.
+- Scaling path: Display sample count versus exact count and allow export/streaming only through an explicitly bounded mechanism.
 
 ## Dependencies at Risk
 
-**`NtQueryDirectoryFile` native contract:**
-- Risk: The scanner depends directly on `ntdll.dll` structures/status values without generated interop or defensive versioning.
-- Impact: ABI mistakes or unusual filesystem drivers can silently truncate scans or crash unsafe parsing.
-- Migration plan: Wrap the call behind a narrow native adapter, add a bounds-checked parser, and evaluate documented Win32 enumeration or `NtQueryDirectoryFileEx` where performance permits.
+**Native NT directory-information ABI:**
+- Risk: Scanning depends on undocumented/low-level `NtQueryDirectoryFile` behavior and hard-coded `FILE_DIRECTORY_INFORMATION` offsets rather than a managed filesystem API or generated interop layout.
+- Impact: A platform or architecture change can break parsing in unsafe code; the fixed `win-x64` runtime currently hides cross-architecture issues.
+- Migration plan: Centralize generated Windows interop definitions, validate returned lengths, and keep a slower managed enumeration engine available as a tested fallback.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/ScannerCore.csproj`
 
-**`Microsoft.VisualBasic.FileIO` recycle-bin API:**
-- Risk: Recycle-bin behavior is delegated to legacy shell-backed helpers from a worker thread and has minimal integration coverage.
-- Impact: Apartment, shell, long-path, reparse, or policy-specific failures reach users only as exception messages.
-- Migration plan: Add Windows integration tests for recycle-bin files/directories and evaluate a dedicated `IFileOperation` interop implementation in `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`.
+**Mutable CI action references:**
+- Risk: Major-version tags for first- and third-party actions are not immutable, including the release publisher.
+- Impact: CI compromise can alter build artifacts or releases while workflows still appear unchanged in the repository.
+- Migration plan: Pin reviewed SHAs and use Dependabot to update them.
+- Files: `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, `.github/workflows/codeql.yml`, `.github/workflows/dependabot-auto-merge.yml`
 
-**Moving GitHub Action tags:**
-- Risk: `actions/*@v4`, `github/codeql-action/*@v3`, and `softprops/action-gh-release@v2` are not immutable.
-- Impact: Workflow behavior can change without a repository diff.
-- Migration plan: Pin reviewed SHAs and let Dependabot propose explicit SHA updates in `.github/dependabot.yml`.
+**Unpinned transitive restore graph and rolling SDK feature band:**
+- Risk: Direct packages are centrally versioned, but no `packages.lock.json` is present and `global.json` permits `latestFeature` roll-forward.
+- Impact: Developer, CI, and release restores can use different transitive graphs or SDK feature bands, reducing reproducibility for native AOT output.
+- Migration plan: Enable locked restore for CI/releases, commit lock files, and choose a deliberate SDK roll-forward policy.
+- Files: `Directory.Packages.props`, `global.json`, `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`
 
 ## Missing Critical Features
 
-**User-visible scan error recovery:**
-- Problem: Fatal scan errors have no dialog or recoverable error state.
-- Blocks: Reliable handling of removable drives, native failures, and future engine fallback exhaustion.
-- Files: `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia/Abstractions/IDialogService.cs`
+**Native AOT/trimming validation on pull requests:**
+- Problem: The app requires `PublishAot` and `PublishTrimmed`, but normal CI only restores, tests, and runs `dotnet build`. `dotnet publish` runs only after a release tag has already been pushed.
+- Blocks: Trimming, native AOT, single-file, and linker regressions can merge undetected and fail only during release creation.
+- Files: `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`, `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`
 
-**Admin NTFS fast path:**
-- Problem: The draft MFT engine is absent.
-- Blocks: The intended seconds-scale whole-volume scan path and accurate file-reference-based hard-link handling.
-- Files: `docs/superpowers/specs/2026-06-17-mft-scan-engine-design.md`, `ScannerCore/ScanEngineSelector.cs`
+**Test gate in the release workflow:**
+- Problem: The tag-triggered release job publishes and creates a release without running either test project; the branch workflow's filters do not make tag builds a test gate.
+- Blocks: A tag on an untested or divergent commit can publish a release even when tests fail.
+- Files: `.github/workflows/release.yml`, `.github/workflows/dotnet-desktop.yml`, `ScannerCore.Tests/ScannerCore.Tests.csproj`, `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`
 
-**Signed, verified Windows distribution:**
-- Problem: Release output is an unsigned zip with no checksums or SBOM.
-- Blocks: Publisher trust and strong artifact provenance for an application that can elevate and permanently delete files.
+**Signed release and provenance:**
+- Problem: Release packaging has no Authenticode signing, checksum publication, SBOM, or build-provenance attestation.
+- Blocks: Strong publisher verification and tamper-evident distribution for an elevation-capable destructive utility.
 - Files: `.github/workflows/release.yml`, `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`
+
+**GitLab pipeline:**
+- Problem: No canonical `.gitlab-ci.yml` is present, so GitLab pushes and merge requests have no repository-defined build, test, security, or release gate.
+- Blocks: Equivalent validation when GitLab is used as the project host.
+- Files: `SizeScanner.slnx`, `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`
 
 ## Test Coverage Gaps
 
-**Filesystem semantics:**
-- What's not tested: Hard links, junctions/symlinks, OneDrive offline placeholders, inaccessible directories, long paths, disappearing devices, partial NTSTATUS failures, and deep trees.
-- Files: `ScannerCore.Tests/DirectoryScannerParsingTests.cs`, `ScannerCore.Tests/DirectoryWalkEngineTests.cs`, `ScannerCore/DirectoryScanner.cs`
-- Risk: Silent size errors, unintended traversal, incomplete trees, or crashes can pass all tests.
+**Parallel fault, memory, and cancellation behavior:**
+- What's not tested: Worker exceptions with full channels, producer/consumer shutdown, wide roots containing millions of directories, cancellation during a native call, and extreme `MaxDegreeOfParallelism` values.
+- Files: `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`, `ScannerCore.Tests/BoundedScanMemoryTests.cs`
+- Risk: Deadlocks and transient-memory regressions can pass the current bounded-node and small parallel-tree tests.
 - Priority: High
 
-**Parallelism behavior:**
-- What's not tested: A forced parallel policy, global concurrency bounds, nested-tree scheduling, cancellation during active enumeration, and buffer pressure.
-- Files: `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`, `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`, `ScannerCore/DirectoryWalkEngine.cs`
-- Risk: Performance regressions, thread-pool starvation, and delayed cancellation remain undetected.
+**Filesystem identity edge cases:**
+- What's not tested: Hard links, offline reparse tags, reparse cycles, mount points, long paths, and tree mutation during enumeration.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore.Tests/DirectoryScannerParsingTests.cs`, `ScannerCore.Tests/DirectoryEntryCursorTests.cs`
+- Risk: Incorrect totals, traversal outside the selected tree, unresponsive cancellation, or full-scan failure can ship unnoticed.
 - Priority: High
 
-**UI operation races and failures:**
-- What's not tested: Overlapping scans, scan exceptions, stale progress, command `CanExecute` during scans, settings-save failures, window close during scanning, and stale context-menu coordinates.
-- Files: `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`, `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`, `SizeScanner.Avalonia/Views/ChartView.axaml.cs`
-- Risk: The UI can become stuck or act on the wrong scan/node.
+**Unsafe parser validation:**
+- What's not tested: Truncated records, invalid offsets, odd filename lengths, incorrect returned byte counts, and x86/ARM64 layout.
+- Files: `ScannerCore/DirectoryScanner.cs`, `ScannerCore.Tests/DirectoryScannerParsingTests.cs`
+- Risk: Native-layout regressions affect unsafe memory reads rather than producing a controlled parse failure.
 - Priority: High
 
-**Destructive filesystem behavior:**
-- What's not tested: Recycle-bin success, recursive directory deletion, reparse targets, target replacement races, long paths, and elevated/protected locations.
-- Files: `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`, `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`
-- Risk: Delete behavior can fail or affect an unexpected target without regression coverage.
+**Root scan failure cleanup:**
+- What's not tested: A non-cancellation exception from `IScanService.RunAsync`, dialog/status behavior, command re-enablement, and cancellation-source disposal.
+- Files: `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`, `SizeScanner.Avalonia.Tests/FakeScanService.cs`
+- Risk: The UI remains permanently busy or an async command exception terminates the application.
 - Priority: High
 
-**Synthetic-name collisions:**
-- What's not tested: Real files/directories using chart metadata names.
-- Files: `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`, `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`, `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`
-- Risk: Legal user data is rendered and acted on incorrectly.
+**Destructive operation boundaries:**
+- What's not tested: Recycle-bin directory deletion, permanent recursive directory deletion, reparse replacement before delete, elevated behavior, Explorer launch failures, duplicate delete commands, and scan/delete concurrency.
+- Files: `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`, `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`, `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`, `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`
+- Risk: Stale-path and concurrency defects affect destructive filesystem operations.
+- Priority: High
+
+**Synthetic-name collisions and inaccessible truncation UI:**
+- What's not tested: Real objects named like chart metadata, display of `InaccessibleCount`, `InaccessiblePathsTruncated`, and unknown directory-scan inaccessible size.
+- Files: `SizeScanner.Avalonia/Charting/ChartNodeRules.cs`, `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`, `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`, `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`
+- Risk: Valid objects become non-interactive and users receive incomplete or misleading scan information.
 - Priority: Medium
 
-**Release guarantees:**
-- What's not tested: Native AOT publish on pull requests, analyzer warnings as errors, minimum coverage, signed artifact verification, and GitLab CI parity.
-- Files: `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, `Directory.Build.props`, `AGENTS.md`
-- Risk: Trimming/AOT, quality, or packaging regressions are discovered only after a tag or by users.
+**Performance and publish gates:**
+- What's not tested: The ten-million-entry memory test and real-volume parallel speed test are opt-in, no coverage threshold is enforced, and pull requests do not native-publish the application. The current Release suite passes 136 tests with one performance test skipped, while four xUnit cancellation-token analyzer warnings remain in UI tests.
+- Files: `ScannerCore.Tests/BoundedScanMemoryTests.cs`, `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`, `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`, `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`, `.github/workflows/dotnet-desktop.yml`
+- Risk: Performance, native AOT, trimming, and cancellation-responsiveness regressions are not release-blocking.
 - Priority: Medium
 
 ---
 
-*Concerns audit: 2026-07-16*
+*Concerns audit: 2026-08-06*

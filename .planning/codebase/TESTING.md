@@ -1,52 +1,60 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-07-16
+**Analysis Date:** 2026-08-06
 
 ## Test Framework
 
 **Runner:**
-- xUnit v3 3.2.2 runs both test projects; package versions are centralized in `/Directory.Packages.props`.
-- Microsoft.NET.Test.Sdk 18.6.0 and xunit.runner.visualstudio 3.1.5 provide `dotnet test` and IDE discovery through `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- Both test projects target `net10.0-windows`, select `win-x64`, use xUnit v3's executable test-project model, and are non-packable in `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- The .NET 10.0.100 SDK baseline is pinned with latest-feature roll-forward in `/global.json`.
+- xUnit v3 `3.2.2` with `xunit.runner.visualstudio` `3.1.5`.
+- Microsoft.NET.Test.Sdk `18.8.1` supplies `dotnet test` integration.
+- Package versions are centralized in `Directory.Packages.props`; test project references are in `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
+- Both test projects target `net10.0-windows`, use the `win-x64` runtime identifier, and are non-packable executable test projects.
+- Config: `Directory.Build.props`, `Directory.Packages.props`, `ScannerCore.Tests/ScannerCore.Tests.csproj`, and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`. No `.runsettings` file or assembly-level xUnit configuration is present.
 
 **Assertion Library:**
-- Use xUnit's `Assert` APIs directly; no FluentAssertions package is listed in `/Directory.Packages.props`.
-- Prefer specific assertions such as `Assert.Equal`, `Assert.Single`, `Assert.Contains`, `Assert.DoesNotContain`, `Assert.Same`, and `Assert.IsType`, as demonstrated in `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs` and `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs`.
+- Use xUnit's built-in `Assert` API. No FluentAssertions, Shouldly, Moq, NSubstitute, FakeItEasy, or AutoFixture dependency is present.
+- Prefer the most specific assertion: `Assert.Single`, `Assert.Empty`, `Assert.Same`, `Assert.IsType`, `Assert.Contains`, `Assert.DoesNotContain`, `Assert.Throws`, and `Assert.ThrowsAnyAsync`.
+- For floating-point chart geometry, use xUnit's precision overload, as in `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs` and `SizeScanner.Avalonia.Tests/SliceColorPaletteTests.cs`.
 
 **Run Commands:**
 ```powershell
 dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release
 dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Release
-dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --filter "FullyQualifiedName~DirectoryWalkEngineTests"
-dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Release --collect:"XPlat Code Coverage"
+dotnet test SizeScanner.slnx -c Release
+dotnet watch --project ScannerCore.Tests/ScannerCore.Tests.csproj test
+dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
+dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
 ```
-- The two project-level Release commands are the canonical local suite commands documented in `/AGENTS.md`.
-- Filter by fully qualified name for focused runs, following the command pattern documented in `docs/superpowers/plans/2026-06-17-scanner-optimization-phases-1-4.md`.
-- No repository-specific watch-mode command or test run-settings file is configured in `/SizeScanner.slnx` or either test project.
+- Use the two project-specific commands for the same separation enforced in `.github/workflows/dotnet-desktop.yml`.
+- Watch mode is not repository-configured; the `dotnet watch` command is an optional local workflow.
+- Tests require Windows because the projects target `net10.0-windows` and core integration tests exercise native directory enumeration.
 
 ## Test File Organization
 
 **Location:**
-- Core tests live in the separate `ScannerCore.Tests/` project and reference `ScannerCore/` through `ScannerCore.Tests/ScannerCore.Tests.csproj`.
-- UI, chart, view-model, and service tests live in `SizeScanner.Avalonia.Tests/` and reference both production projects through `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- Test helpers are project-local: `ScannerCore.Tests/TemporaryDirectory.cs`, `SizeScanner.Avalonia.Tests/TempDir.cs`, and `SizeScanner.Avalonia.Tests/TestTree.cs`.
+- Keep core tests in the separate `ScannerCore.Tests/` project and Avalonia/application tests in `SizeScanner.Avalonia.Tests/`.
+- Mirror the production subject by filename rather than co-locating tests. `ScannerCore/DriveScanner.cs` maps to `ScannerCore.Tests/DriveScannerTests.cs`; `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` maps to `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- Put cross-test helpers at the test-project root: `ScannerCore.Tests/TemporaryDirectory.cs`, `ScannerCore.Tests/SyntheticDirectoryEntrySource.cs`, `ScannerCore.Tests/RecordingEntrySink.cs`, `SizeScanner.Avalonia.Tests/TempDir.cs`, `SizeScanner.Avalonia.Tests/TestTree.cs`, and `SizeScanner.Avalonia.Tests/FakeScanService.cs`.
+- Keep generated `bin/`, `obj/`, `TestResults/`, and nested `.worktrees/` content out of test-source analysis and source control; `.gitignore` excludes each category.
 
 **Naming:**
-- Name files and classes `{Subject}Tests`, for example `ScannerCore.Tests/ScanEngineSelectorTests.cs` and `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
-- Name methods as `{Member}_{expected_behavior}` with underscores, for example `RunAsync_honors_cancellation` in `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
-- All detected tests use `[Fact]`; no `[Theory]`, `[InlineData]`, collection fixture, or assembly fixture pattern appears in `ScannerCore.Tests/` or `SizeScanner.Avalonia.Tests/`.
+- Name test files and classes `<Subject>Tests`.
+- Name test methods `Subject_or_scenario_expected_behavior`, using underscores between clauses: `RunScopeAsync_builds_tree_without_mutating_root_scan_state` in `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
+- Name test doubles for their behavior (`FakeEngine`, `NoopFs`, `FailingFs`, `PendingFs`) and factories for the object they create (`CreateVm`, `SampleDriveRoot`).
 
 **Structure:**
 ```text
 ScannerCore.Tests/
-├── *Tests.cs                  # Core unit and Windows filesystem integration tests
-└── TemporaryDirectory.cs     # Disposable filesystem fixture
+├── <CoreSubject>Tests.cs
+├── TemporaryDirectory.cs
+├── SyntheticDirectoryEntrySource.cs
+└── RecordingEntrySink.cs
 
 SizeScanner.Avalonia.Tests/
-├── *Tests.cs                  # Chart, service, view-model, and light view tests
-├── TempDir.cs                 # Disposable filesystem fixture
-└── TestTree.cs                # FsItem tree factory
+├── <ApplicationSubject>Tests.cs
+├── FakeScanService.cs
+├── TestTree.cs
+└── TempDir.cs
 ```
 
 ## Test Structure
@@ -54,57 +62,73 @@ SizeScanner.Avalonia.Tests/
 **Suite Organization:**
 ```csharp
 [Fact]
-public void Scan_builds_tree_with_sizes_parents_and_total()
+public async Task DeleteAsync_permanent_removes_file_and_reports_success()
 {
-    using var temp = new TemporaryDirectory();
-    temp.CreateFile("a.txt", 100);
+    using var dir = new TempDir();
+    var file = dir.CreateFile("doomed.bin", 16);
+    var actions = new WindowsFileSystemActions();
 
-    var result = new DirectoryWalkEngine().Scan(
-        temp.Path, isDriveScan: false, CancellationToken.None, onProgress: null);
+    var result = await actions.DeleteAsync(file, permanent: true);
 
-    Assert.Equal(100, result.Total);
-    Assert.Same(result.Root, result.Root.Items![0].Parent);
+    Assert.True(result.Success);
+    Assert.Null(result.Error);
+    Assert.False(File.Exists(file));
 }
 ```
-- This arrange/act/assert shape, separated by blank lines rather than labels, is used in `ScannerCore.Tests/DirectoryWalkEngineTests.cs`.
+- This arrange/act/assert pattern is used in `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`.
 
 **Patterns:**
-- Construct the subject inside each test rather than sharing mutable fixtures; examples include `ScannerCore.Tests/DriveScannerTests.cs` and `SizeScanner.Avalonia.Tests/FilterThresholdTests.cs`.
-- Build only the minimum domain tree needed through `TestTree.Dir` and `TestTree.File` from `SizeScanner.Avalonia.Tests/TestTree.cs`.
-- Assert both observable results and important invariants such as parent identity, aggregate size, ring index, and angular totals in `ScannerCore.Tests/DirectoryWalkEngineTests.cs` and `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`.
-- Use predicate overloads of `Assert.Contains`, `Assert.DoesNotContain`, and `Assert.Single` for chart segments in `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`.
-- Include diagnostic values in performance or cap assertions, as in `SizeScanner.Avalonia.Tests/SunburstChartBuilderCapTests.cs` and `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`.
-- Test public behavior by default; core-only seams are accessible through `[assembly: InternalsVisibleTo("ScannerCore.Tests")]` in `ScannerCore/AssemblyInfo.cs`.
+- Use one behavior per `[Fact]`, with blank lines separating arrange, act, and assert.
+- Use `[Theory]` and `[InlineData]` when the same contract must hold across a small input matrix, as in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- Build only the state needed by the test. Pure chart tests construct small `FsItem` trees through `TestTree` in `SizeScanner.Avalonia.Tests/TestTree.cs`.
+- Assert externally visible state and collaborator calls. `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs` checks layout, scope state, command behavior, and `FakeScanService.RootCalls`/`ScopeCalls`.
+- Test public behavior by default. Core-only seams are available to the core test assembly through `[assembly: InternalsVisibleTo("ScannerCore.Tests")]` in `ScannerCore/AssemblyInfo.cs`.
+- Dispose all temporary directories, cancellation sources, and cursors with `using var`. Return pooled buffers in `finally`, as in `ScannerCore.Tests/DirectoryScannerParsingTests.cs`.
+- Use named arguments for boolean modes and budgets so test intent remains clear.
 
 ## Mocking
 
-**Framework:** Hand-written fakes and no-op implementations; no Moq, NSubstitute, FakeItEasy, or other mocking library is configured in `/Directory.Packages.props`.
+**Framework:** Manual fakes, stubs, no-op implementations, synthetic sources, and real temporary filesystem fixtures; no mocking library.
 
 **Patterns:**
 ```csharp
-private sealed class FakeSettings : ISettingsStore
+internal sealed class FakeScanService : IScanService
 {
-    public UserSettings Loaded { get; set; } = new();
-    public UserSettings Saved { get; private set; } = new();
-    public UserSettings Load() => Loaded;
-    public void Save(UserSettings settings) => Saved = settings;
+    public List<(string Target, bool IsDrive)> RootCalls { get; } = [];
+    public Func<string, bool, FsItem>? RootResult { get; set; }
+    public TaskCompletionSource<FsItem>? PendingRoot { get; set; }
+
+    public Task<FsItem> RunAsync(
+        string target,
+        bool isDrive,
+        CancellationToken cancellationToken,
+        IProgress<ScanProgress> progress,
+        ScanTreeBudget? budget = null)
+    {
+        RootCalls.Add((target, isDrive));
+        if (PendingRoot is not null)
+            return PendingRoot.Task;
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(RootResult!(target, isDrive));
+    }
 }
 ```
-- Keep small fakes nested in the owning test class, as in `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs` and `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
-- Expose captured arguments and call counts directly from fakes, such as `LastTarget`, `IsDriveScan`, and `ScanCalls` in `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs` and `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
-- Use behavior-specific implementations (`NoopFs`, `FailingFs`, and `PendingFs`) instead of configurable general mocks in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
-- Inject a small delegate when a full interface fake is unnecessary; `DirectoryWalkEngine(Func<string, bool>)` is exercised in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- The full configurable recorder is in `SizeScanner.Avalonia.Tests/FakeScanService.cs`.
+- Keep tiny single-suite doubles nested in the test class, as `FakeEngine` is in `ScannerCore.Tests/ScanEngineSelectorTests.cs` and `NoopFs`/`PendingFs` are in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- Implement core streaming contracts with deterministic in-memory sources and cursors in `ScannerCore.Tests/SyntheticDirectoryEntrySource.cs`; capture span-backed callback values immediately in `ScannerCore.Tests/RecordingEntrySink.cs`.
+- Inject deterministic policy delegates instead of mocking static platform APIs, as `DirectoryWalkEngine(Func<string, bool>)` is used in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
 
 **What to Mock:**
-- Replace UI dialogs, drive discovery, elevation, folder selection, settings, and destructive filesystem commands behind interfaces from `SizeScanner.Avalonia/Abstractions/` when testing view models, as shown in `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`.
-- Replace scan engines through `ScannerCore/IScanEngine.cs` when verifying selection and fallback behavior in `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
-- Control asynchronous boundaries with `TaskCompletionSource` configured with `RunContinuationsAsynchronously`, as in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- Mock UI boundaries defined under `SizeScanner.Avalonia/Abstractions/`: scanning, dialogs, settings, drive discovery, folder picking, elevation, and filesystem actions.
+- Fake native directory input with `IDirectoryEntrySource`/`IDirectoryEntryCursor` when testing walker budgets, inaccessible handling, memory bounds, or parallel scheduling independently of disk layout.
+- Record calls and configurable results when interaction order or root-versus-scope state is part of the contract.
+- Control incomplete async operations with `TaskCompletionSource`, preferably using `TaskCreationOptions.RunContinuationsAsynchronously` as `PendingFs` does in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
 
 **What NOT to Mock:**
-- Use the real native directory scanner against disposable temp trees for enumeration, sizing, concurrency, and walk behavior in `ScannerCore.Tests/DirectoryScannerParsingTests.cs` and `ScannerCore.Tests/DirectoryWalkEngineTests.cs`.
-- Use real chart builders and `FsItem` trees for geometry and filtering behavior in `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`.
-- Use the real JSON serializer and filesystem for settings round trips in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`.
-- Exercise permanent deletion with a temporary file in `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`; do not exercise recycle-bin UI behavior in the automated suite.
+- Do not mock pure chart algorithms or `FsItem`; construct real model trees with `SizeScanner.Avalonia.Tests/TestTree.cs`.
+- Do not mock JSON serialization; round-trip a real file under a unique temporary directory in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`.
+- Do not mock filesystem enumeration when validating native cursor parsing, logical/allocation size semantics, parent links, or service integration. Use `ScannerCore.Tests/TemporaryDirectory.cs` or `SizeScanner.Avalonia.Tests/TempDir.cs`.
+- Do not run destructive tests against user data. `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs` tests permanent deletion only inside `TempDir` and does not automate recycle-bin behavior.
 
 ## Fixtures and Factories
 
@@ -112,97 +136,111 @@ private sealed class FakeSettings : ISettingsStore
 ```csharp
 var root = TestTree.Dir("C:\\",
     TestTree.File(DriveScanMetadata.FreeSpaceName, 500),
+    TestTree.File(DriveScanMetadata.InaccessibleName, 0),
     TestTree.Dir("Windows",
         TestTree.File("kernel.sys", 300)));
 ```
-- `SizeScanner.Avalonia.Tests/TestTree.cs` sums child sizes and attaches parent pointers so chart and view-model tests use valid trees.
-- `ScannerCore.Tests/TemporaryDirectory.cs` and `SizeScanner.Avalonia.Tests/TempDir.cs` create unique directories below the OS temp path and delete them best-effort in `Dispose`.
-- Use `using var` for temp directories and `CancellationTokenSource` instances, as in `ScannerCore.Tests/DriveScannerTests.cs` and `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
+- `SizeScanner.Avalonia.Tests/TestTree.cs` computes directory sizes, attaches children, and establishes parent links.
+- `ScannerCore.Tests/SyntheticDirectoryEntrySource.cs` emits wide synthetic directories in bounded batches without allocating a million `FsItem` inputs.
+- `TemporaryDirectory.CreateFile` and `TempDir.CreateFile` create unique real filesystem fixtures and delete them best-effort during disposal.
 
 **Location:**
-- Keep core filesystem fixtures in `ScannerCore.Tests/TemporaryDirectory.cs`.
-- Keep Avalonia-side fixtures and tree factories in `SizeScanner.Avalonia.Tests/TempDir.cs` and `SizeScanner.Avalonia.Tests/TestTree.cs`.
-- No external fixture files, snapshots, golden images, or test-data directory are used by the test projects in `ScannerCore.Tests/` and `SizeScanner.Avalonia.Tests/`.
+- Core filesystem fixture: `ScannerCore.Tests/TemporaryDirectory.cs`.
+- Core streaming source and factory: `ScannerCore.Tests/SyntheticDirectoryEntrySource.cs`.
+- Core callback recorder: `ScannerCore.Tests/RecordingEntrySink.cs`.
+- Avalonia tree factory: `SizeScanner.Avalonia.Tests/TestTree.cs`.
+- Avalonia filesystem fixture: `SizeScanner.Avalonia.Tests/TempDir.cs`.
+- Avalonia scan fake: `SizeScanner.Avalonia.Tests/FakeScanService.cs`.
+- Prefer a shared helper when multiple test classes need identical semantics; keep one-off fakes private to the suite.
 
 ## Coverage
 
-**Requirements:** Coverage is collected and archived, but no minimum percentage or quality gate is configured in `.github/workflows/dotnet-desktop.yml`.
-
-**Collector:**
-- Both test projects reference coverlet.collector 10.0.1 as a private asset in `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`; the version is centralized in `/Directory.Packages.props`.
-- GitHub CI passes `--collect:"XPlat Code Coverage"` to both test projects in `.github/workflows/dotnet-desktop.yml`.
-- Release-matrix coverage files matching `TestResults/**/*.cobertura.xml` are uploaded as the `coverage` artifact in `.github/workflows/dotnet-desktop.yml`.
-- No report-merging step, HTML report generation, exclusion policy, or checked-in `.runsettings` coverage configuration is present in `/SizeScanner.slnx` or `.github/workflows/dotnet-desktop.yml`.
+**Requirements:** No numeric line, branch, or method coverage threshold is enforced.
 
 **View Coverage:**
 ```powershell
 dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
 dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
 ```
-- Inspect the generated Cobertura XML under `TestResults/`; no repository command renders a local HTML report in `.github/workflows/dotnet-desktop.yml`.
+- `coverlet.collector` `10.0.1` is private to both test projects through their `.csproj` files.
+- `.github/workflows/dotnet-desktop.yml` collects XPlat coverage for both test projects in Debug and Release, writes TRX and Cobertura files under `TestResults/`, and uploads test/coverage artifacts from the Release matrix job.
+- Coverage reports are artifacts only; the workflow does not merge reports, publish a summary, compare against a baseline, or fail on a threshold.
+- `.github/workflows/release.yml` publishes native-AOT artifacts on `v*` tags but does not run tests itself. Release confidence therefore depends on the branch workflow having completed before tagging.
+- `TestResults/` is ignored through `.gitignore`; do not commit local reports.
 
 ## Test Types
 
 **Unit Tests:**
-- Pure formatting, metadata, policy edge cases, and model contracts are tested in `ScannerCore.Tests/HumanizeTests.cs`, `ScannerCore.Tests/DriveScanMetadataTests.cs`, and `ScannerCore.Tests/FsItemTests.cs`.
-- Chart construction, cap behavior, hit-testing, colors, filtering, and tooltips are tested without a running application in `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`, `SizeScanner.Avalonia.Tests/SunburstChartBuilderCapTests.cs`, and `SizeScanner.Avalonia.Tests/SunburstHitTestTests.cs`.
-- View-model tests inject fakes and execute generated commands in `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs` and `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- Core model, budget, metadata, formatting, collector, engine selection, and pure policy tests live in `ScannerCore.Tests/FsItemTests.cs`, `ScannerCore.Tests/ScanTreeBudgetTests.cs`, `ScannerCore.Tests/DriveScanMetadataTests.cs`, `ScannerCore.Tests/HumanizeTests.cs`, `ScannerCore.Tests/BoundedChildCollectorTests.cs`, and `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
+- Chart builder, hit-testing, filtering, palette, tooltip, and view-model policy tests live under `SizeScanner.Avalonia.Tests/`.
+- Use exact domain assertions for sizes, node identity, parent links, synthetic metadata, segment order, sweep angles, and call records.
 
 **Integration Tests:**
-- Windows native enumeration and real temp filesystem behavior are exercised in `ScannerCore.Tests/DirectoryScannerParsingTests.cs`, `ScannerCore.Tests/DirectoryWalkEngineTests.cs`, and `ScannerCore.Tests/DriveScannerTests.cs`.
-- Concurrency and storage-device policy behavior are covered in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` and `ScannerCore.Tests/VolumeParallelismPolicyTests.cs`.
-- Service-to-core integration and cancellation are exercised in `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
-- JSON file persistence and permanent filesystem deletion are exercised in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs` and `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`.
-- Lightweight Avalonia object construction is covered in `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs`; no headless UI host or rendered-window fixture is configured in `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-
-**Performance Tests:**
-- `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs` is tagged with `[Trait("Category", "Performance")]` and skips unless `SIZESCANNER_RUN_PERF_TESTS=1`, `C:\` exists, and the volume policy identifies SSD-class storage.
-- The performance test alternates sequential/parallel order, takes two samples, compares medians, and writes diagnostics through `ITestOutputHelper` in `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`.
-- Default developer and CI test runs skip the drive-wide performance test through `Assert.SkipUnless` in `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`.
+- Native directory cursor and parser integration tests use temporary real directories in `ScannerCore.Tests/DirectoryEntryCursorTests.cs` and `ScannerCore.Tests/DirectoryScannerParsingTests.cs`.
+- End-to-end core scan composition is exercised by `ScannerCore.Tests/DriveScannerTests.cs`, `ScannerCore.Tests/DirectoryWalkEngineTests.cs`, and `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- Service/filesystem integration is exercised by `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`, `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`, and `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`.
+- Platform-sensitive tests must stay Windows-safe and self-contained. `ScannerCore.Tests/VolumeParallelismPolicyTests.cs` avoids asserting SSD/HDD hardware details and only checks stable policy outcomes.
 
 **E2E Tests:**
-- No application-process, window-driving, screenshot, or installer E2E framework is configured in `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj`.
-- `SizeScanner.Avalonia.Tests/SmokeTests.cs` validates the shared tree helper, not an end-to-end application launch.
+- No desktop automation, screenshot comparison, rendered visual regression, or packaged-application E2E framework is used.
+- `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs` constructs Avalonia view objects without launching the desktop lifetime; `SizeScanner.Avalonia.Tests/SmokeTests.cs` validates test-tree plumbing, not a running application.
+- `ScannerConsole/Program.cs` is a manual scan/performance harness, not an automated test suite.
+
+**Performance Tests:**
+- Mark opt-in performance checks with `[Trait("Category", "Performance")]`.
+- Gate expensive or machine-dependent runs with `SIZESCANNER_RUN_PERF_TESTS=1`. `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs` uses `Assert.SkipUnless` for environment, path, and storage-class preconditions.
+- `ScannerCore.Tests/BoundedScanMemoryTests.cs` keeps deterministic million-entry bounded-memory assertions in the normal suite and gates only the ten-million-entry diagnostic case.
+- Emit measurement detail with `ITestOutputHelper` or test console output, never as production logging.
 
 ## Common Patterns
 
 **Async Testing:**
 ```csharp
-var deleteTask = vm.DeleteCommand.ExecuteAsync(null);
-await fileSystem.Started.Task.WaitAsync(
-    TimeSpan.FromSeconds(5),
-    TestContext.Current.CancellationToken);
+var scopeTask = vm.TryScopeAtAsync(windows);
 
-Assert.True(vm.IsDeleting);
-fileSystem.Completion.SetResult(new DeleteResult(true, null));
-await deleteTask;
+Assert.True(vm.IsScopeScanning);
+Assert.Same(layoutBefore, vm.Layout);
+
+pending.SetResult(scannedTree);
+Assert.True(await scopeTask);
+Assert.False(vm.IsScopeScanning);
 ```
-- Use xUnit v3's `TestContext.Current.CancellationToken` and an explicit timeout when waiting for a controlled asynchronous state, as in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
-- Return `Task` from async test methods and await production operations directly in `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs` and `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`.
+- This controlled in-flight pattern is used in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs` and `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`.
+- Await asynchronous APIs directly; do not block with `.Result` or `.Wait()`.
+- For cancellation, cancel a `CancellationTokenSource`, complete the controlled pending task as canceled when applicable, await the operation, and assert both return/exception semantics and restored state.
+- When waiting for a test double to signal that an operation started, use an explicit timeout plus `TestContext.Current.CancellationToken`, as in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- Use `Assert.ThrowsAnyAsync<OperationCanceledException>` for service cancellation contracts, as in `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
 
 **Error Testing:**
 ```csharp
-using var cts = new CancellationTokenSource();
-cts.Cancel();
-
-await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-    service.RunAsync(dir.Path, isDrive: false, cts.Token, progress));
+Assert.Throws<OperationCanceledException>(() =>
+    engine.Scan(
+        temp.Path,
+        isDriveScan: false,
+        cts.Token,
+        onProgress: null,
+        ScanTreeBudget.Default));
 ```
-- Assert cancellation by exception at the async service boundary in `SizeScanner.Avalonia.Tests/ScanServiceTests.cs`.
-- Assert result objects for recoverable filesystem failures in `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs`.
-- Verify fallback behavior by making a fake engine throw in `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
-- Verify malformed configuration falls back to defaults in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`.
+- Assert exact exception types for synchronous validation/cancellation in `ScannerCore.Tests/ScanTreeBudgetTests.cs` and `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- For recoverable UI/service failures, configure a failing fake and assert that state remains unchanged, as `FailingFs` is used in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
+- For corrupt or missing persistence input, exercise the real boundary and assert defaults rather than the internal catch block, as in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`.
+- For missing filesystem objects, assert structured failure (`DeleteResult`) or nullable cursor contracts instead of expecting exceptions, as in `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs` and `ScannerCore.Tests/DirectoryEntryCursorTests.cs`.
 
-## CI Test Execution
+**Concurrency and Resource Bounds:**
+- Compare sequential and parallel results for total, ordering, parent links, and retained-node limits in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
+- Use a tracking source around the real cursor to observe maximum worker concurrency; keep timing sleeps narrowly scoped and explain why they are needed.
+- Validate both exact totals and bounded retained structures with synthetic million-entry inputs in `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs` and `ScannerCore.Tests/BoundedScanMemoryTests.cs`.
+- Use unique GUID-based temporary directory names so xUnit's default class-level parallelism does not collide. No repository-wide collection disables parallel execution.
 
-- GitHub Actions runs both test projects on `windows-latest` for Debug and Release configurations in `.github/workflows/dotnet-desktop.yml`.
-- Each CI test command writes a distinct TRX file and collects XPlat coverage into `TestResults/` in `.github/workflows/dotnet-desktop.yml`.
-- Test result and coverage artifacts upload only from the Release matrix entry and use `always()` so failures still preserve diagnostics in `.github/workflows/dotnet-desktop.yml`.
-- The workflow restores and builds `SizeScanner.slnx` after the test steps, using the SDK pinned by `/global.json` and package cache inputs from all project files plus `/Directory.Packages.props`.
-- CodeQL performs a separate manual Release build on `windows-latest` but does not run tests in `.github/workflows/codeql.yml`.
-- Release publishing restores and publishes the application but does not rerun tests in `.github/workflows/release.yml`.
-- No tracked `.gitlab-ci.yml` is present at the repository root; the active test pipeline definition detected in this repository is `.github/workflows/dotnet-desktop.yml`.
+## CI Practices
+
+- `.github/workflows/dotnet-desktop.yml` runs on pushes and pull requests to `main` or `master` using `windows-latest`.
+- The workflow tests both `ScannerCore.Tests/ScannerCore.Tests.csproj` and `SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj` in a Debug/Release matrix before building `SizeScanner.slnx`.
+- Each CI test invocation writes a distinct TRX filename and collects XPlat coverage into `TestResults/`.
+- Release-matrix test and coverage artifacts are uploaded even when tests fail (`always()`); Release build artifacts are uploaded only on success.
+- `.github/workflows/release.yml` performs restore, native-AOT publish, packaging, and GitHub release creation for `v*` tags. It contains no independent test step.
+- No GitLab pipeline file is present in the canonical repository. Do not infer CI behavior from nested `.worktrees/` copies.
 
 ---
 
-*Testing analysis: 2026-07-16*
+*Testing analysis: 2026-08-06*
