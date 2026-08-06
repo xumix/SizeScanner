@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -49,6 +51,19 @@ public sealed class MainWindowViewModelTests
     {
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Runs posted callbacks inline. Without an ambient <see cref="SynchronizationContext"/>,
+    /// <see cref="Progress{T}.Report"/> marshals through <see cref="ThreadPool.QueueUserWorkItem(WaitCallback)"/>,
+    /// which races an unrelated <c>await Task.Yield()</c> once the pool has multiple warm
+    /// threads. Capturing this context makes the view-model's <see cref="Progress{T}"/>
+    /// reporter deliver synchronously, so assertions immediately after <c>Report(...)</c> are
+    /// deterministic. Mirrors <c>ChartViewModelTests.ImmediateSynchronizationContext</c>.
+    /// </summary>
+    private sealed class ImmediateSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) => d(state);
     }
 
     private static MainWindowViewModel CreateVm(
@@ -218,6 +233,95 @@ public sealed class MainWindowViewModelTests
 
         Assert.False(chart.IsScoped);
         Assert.Equal(Humanize.Size(999), vm.InaccessibleTotalSize);
+    }
+
+    [Fact]
+    public async Task Scoped_scan_drives_main_window_progress_presentation()
+    {
+        var previousContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new ImmediateSynchronizationContext());
+        try
+        {
+            var scan = new FakeScanService();
+            var chart = new ChartViewModel(scan, new NoopFs(), new NoopDialogs());
+            var root = TestTree.Dir("C:\\", TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+            var vm = CreateVm(root, chart: chart, scan: scan);
+            await vm.ScanTargetAsync("C:\\", isDrive: false);
+            var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+            scan.PendingScope = pending;
+
+            var scopeTask = chart.TryScopeAtAsync(root.Items![0]);
+
+            Assert.True(vm.IsBusy);
+            Assert.True(vm.DisplayProgressIsIndeterminate);
+            Assert.Equal(0, vm.DisplayProgressValue);
+
+            scan.ScopeProgress!.Report(new ScanProgress("C:\\Data", 20, 42f, false));
+            await Task.Yield();
+
+            Assert.False(vm.DisplayProgressIsIndeterminate);
+            Assert.Equal(42, vm.DisplayProgressValue);
+            Assert.Contains("C:\\Data", vm.DisplayStatusText);
+
+            pending.SetResult(TestTree.Dir("Data", TestTree.File("f.bin", 10)));
+            Assert.True(await scopeTask);
+            Assert.False(vm.IsBusy);
+            Assert.False(vm.DisplayProgressIsIndeterminate);
+            Assert.Equal(0, vm.DisplayProgressValue);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    [Fact]
+    public async Task Root_scan_without_percentage_uses_indeterminate_progress()
+    {
+        var previousContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new ImmediateSynchronizationContext());
+        try
+        {
+            var scan = new FakeScanService();
+            var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+            scan.PendingRoot = pending;
+            var vm = CreateVm(DriveRoot(), scan: scan);
+
+            var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+            scan.RootProgress!.Report(new ScanProgress("D:\\data\\child", 100, null, false));
+            await Task.Yield();
+
+            Assert.True(vm.DisplayProgressIsIndeterminate);
+            Assert.Equal(0, vm.DisplayProgressValue);
+
+            pending.SetResult(DriveRoot());
+            await scanTask;
+            Assert.False(vm.DisplayProgressIsIndeterminate);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    [Fact]
+    public async Task Failed_root_scan_clears_busy_progress_state()
+    {
+        var scan = new FakeScanService();
+        var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingRoot = pending;
+        var vm = CreateVm(DriveRoot(), scan: scan);
+        var scanTask = vm.ScanTargetAsync("D:\\data", isDrive: false);
+
+        pending.SetException(new IOException("boom"));
+
+        await Assert.ThrowsAsync<IOException>(() => scanTask);
+        Assert.False(vm.IsBusy);
+        Assert.False(vm.Chart.IsChartScanning);
+        Assert.False(vm.DisplayProgressIsIndeterminate);
+        Assert.Equal(0, vm.DisplayProgressValue);
+        Assert.Empty(vm.StatusDetails);
+        Assert.Equal("Scan failed", vm.StatusText);
     }
 
     [Fact]

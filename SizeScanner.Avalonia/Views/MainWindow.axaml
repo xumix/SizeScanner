@@ -41,12 +41,13 @@
                         IsEnabled="{Binding !IsBusy}" />
                 <Separator Height="NaN" Width="1" />
                     <Button Content="Rescan" Command="{Binding RescanCommand}" IsEnabled="{Binding !IsBusy}" />
-                <Separator Height="NaN" Width="1" IsVisible="{Binding IsScanning}" />
+                <Separator Height="NaN" Width="1" IsVisible="{Binding IsBusy}" />
                 <ProgressBar Width="280" Minimum="0" Maximum="100"
-                             Value="{Binding ProgressValue}"
-                             IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
+                             Value="{Binding DisplayProgressValue}"
+                             IsIndeterminate="{Binding DisplayProgressIsIndeterminate}"
+                             IsVisible="{Binding IsBusy}" VerticalAlignment="Center" />
                 <Button Content="Cancel" Command="{Binding CancelScanCommand}"
-                        IsVisible="{Binding IsScanning}" />
+                        IsVisible="{Binding IsBusy}" />
                 <Separator Height="NaN" Width="1" />
                 <ComboBox ItemsSource="{Binding FreeSpaceOptions}"
                           SelectedIndex="{Binding FreeSpaceIndex}"
