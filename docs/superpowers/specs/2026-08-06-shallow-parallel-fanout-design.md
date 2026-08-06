@@ -314,7 +314,7 @@ Applying the rule conservatively: since **D ≈ C**, the decision is to **revert
 
 ### Balanced confirmation run
 
-**Why:** the grouped order's cache-warmth confound (above) could not be ruled out as the reason `D` and `C` came out close and `E` came out ahead — an artifact of run position rather than a real property of three-level fan-out. `Fan_out_configuration_matrix_report` was revised to collect its two samples per config across **two global rounds** instead of two back-to-back samples per config: round 1 walks the configs `A→B→C→D→E`, round 2 walks them in reverse, `E→D→C→B→A`. Every config now gets exactly one early-round and one late-round sample (except the middle config, `C`, which is position 3 of 5 in both directions and so is consistently mid-run in both rounds — an accepted limitation of a simple two-round reversal, not a hidden bias toward any other single config). Same 5 exact configs, same 2 samples each, same `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` reset inside `MeasureScan`, same `Median` helper, same SSD/perf gates, no new dependency.
+**Why:** the grouped order's cache-warmth confound (above) could not be ruled out as the reason `D` and `C` came out close and `E` came out ahead — an artifact of run position rather than a real property of three-level fan-out. `Fan_out_configuration_matrix_report` was revised to collect its two samples per config across **two global rounds** instead of two back-to-back samples per config: round 1 walks the configs `A→B→C→D→E`, round 2 walks them in reverse, `E→D→C→B→A`. Every config now gets exactly one early-round and one late-round sample (except the middle config, `C`, which is position 3 of 5 in both directions and so is consistently mid-run in both rounds — an accepted limitation of a simple two-round reversal, not a hidden bias toward any other single config). Same 5 exact configs, same 2 samples each, same `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` reset inside `MeasureScan`, same SSD/perf gates, no new dependency. **(Fix Round 1 update: the per-config summary statistic below was originally `Median`; see the correction immediately after the raw output — it is now the arithmetic `Mean` of the two samples.)**
 
 Code (`ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`):
 
@@ -372,12 +372,24 @@ Code (`ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`):
         {
             output.WriteLine(
                 $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
-                $"median={Median(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
+                $"mean={Mean(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
         }
     }
 ```
 
-`MeasureScan` and `Median` are unchanged from the initial run.
+`MeasureScan` is unchanged from the initial run. **Fix Round 1:** the final summary line above originally read `median={Median(...)}` (see [Fix Round 1 correction](#fix-round-1-mean-replaces-a-biased-median-of-two) below for why); it is now `mean={Mean(...)}`, backed by a new helper:
+
+```csharp
+private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+{
+    var total = TimeSpan.Zero;
+    foreach (var sample in samples)
+        total += sample;
+    return total / samples.Count;
+}
+```
+
+`Median` itself is untouched and remains the statistic used by the separate `Parallel_walk_is_faster_than_sequential_on_c_drive` test (also 2 samples, but that test only asserts a `<` comparison between two independently-computed medians, not a labeled "the middle value" claim, so it does not carry the same misleading-label risk).
 
 #### Command
 
@@ -413,7 +425,33 @@ Total tests: 1
  Total time: 2,7519 Minutes
 ```
 
-(`Median` of 2 samples with this codebase's `sorted[Length / 2]` implementation returns the **larger/slower** of the two samples, not an average — that convention is unchanged from the original brief and applies identically to both runs below, so it does not bias the *comparison* between them, but "median" here always means "worse of two.")
+The five `median=...` summary lines above are the **unedited console transcript** from the run as originally executed with the pre-fix harness; they are kept verbatim as the historical raw record. They are **not** the controlling statistic — see the correction immediately below.
+
+#### Fix Round 1: mean replaces a biased median-of-two
+
+**Problem found in review:** the reversed A↔E round order removes the *position* bias, but the summary statistic did not. This codebase's `Median(samples)` is `sorted[samples.Count / 2]`; for exactly 2 samples that is `sorted[1]`, i.e. the **larger (slower)** of the two, not a true middle value. Under monotonic cache warming (each successive scan on a live, busy `C:\` tends to run in a slightly warmer/slower system state as background churn accumulates — see the totals discussion above), "always keep the larger of the two" is not a neutral choice: combined with the balanced round order, it does not average out early/late position the way an actual median or mean would. This does not invalidate the round-balancing fix (that fix targeted *which* position each config sampled at, not how the two samples are combined), but it does mean the reported "confirmed medians" above were never a properly symmetric statistic. Fixed by adding a dedicated arithmetic-mean helper and using it only for this test's per-config summary; `Median` itself is untouched and still backs the unrelated `Parallel_walk_is_faster_than_sequential_on_c_drive` test's `<` comparison of two independently-computed medians:
+
+```csharp
+private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+{
+    var total = TimeSpan.Zero;
+    foreach (var sample in samples)
+        total += sample;
+    return total / samples.Count;
+}
+```
+
+The summary output line changed from `median={Median(samples[i])...}` to `mean={Mean(samples[i])...}`. **No real-volume rerun was performed or required** — the fix recomputes from the exact two raw per-execution `elapsed=...` samples already captured above, using simple arithmetic averaging:
+
+| Config | Round 1 | Round 2 | Mean | (previous, biased) median |
+|---|---|---|---|---|
+| A sequential | 38.08s | 27.98s | **33.03s** | 38.08s |
+| B root-only dop4 | 13.94s | 13.82s | **13.88s** | 13.94s |
+| C root-only dopN | 12.77s | 12.28s | **12.525s** (≈12.53s) | 12.77s |
+| D two-level dopN | 13.04s | 13.18s | **13.11s** | 13.18s |
+| E three-level dopN | 9.24s | 9.49s | **9.365s** (≈9.37s) | 9.49s |
+
+The means are the correct controlling statistic from here on; the "previous, biased median" column is shown only to make the correction auditable, not as an alternative reading.
 
 #### Cache-order effect, directly demonstrated
 
@@ -423,15 +461,15 @@ Config **A** (fully sequential, single slot) was measured cold in round 1 (first
 
 The 10 totals from this run span 395,078,032,392 – 395,083,169,312 (~5.1 MB spread, ~1.4×10⁻⁵ relative to ~368 GiB) — the same order of magnitude as the initial run's spread and consistent with (not contradicting) the live-volume-churn explanation already established there. This run's own layout gives an additional, independent confirmation beyond that prior throwaway experiment: listing all 10 totals in the order they were actually measured shows they climb **almost monotonically with wall-clock position, independent of which config produced them** — e.g. round 1's total rises from A (measured 1st) through E (measured 5th), and every round-2 total is greater than or equal to its round-1 counterpart for the *same* config (E's is the sole, negligible exception, −53,216 bytes, ≈1.9×10⁻⁷ relative — consistent with a single background file being briefly smaller, e.g. a rewritten log or cache file, not a scan defect). A total that tracked *configuration* rather than *wall-clock position* would not show this shape. Conclusion unchanged: not BLOCKED, this is live-volume churn.
 
-#### Decision rule re-applied to the confirmed (balanced) medians
+#### Decision rule re-applied to the confirmed (balanced) means
 
 | Comparison | Values | Verdict |
 |---|---|---|
-| D vs B | 13.18s vs 13.94s | D faster (~5.5%) |
-| D vs C | 13.18s vs 12.77s | D **slower** (~3.2%) — within the ~3.8% noise band `C` itself showed round-to-round |
-| E vs D | 9.49s vs 13.18s | E materially faster (~28.0%) — far outside any parallel config's round-to-round noise (max ~3.8%) |
+| D vs B | 13.11s vs 13.88s | D faster (~5.5%) |
+| D vs C | 13.11s vs 12.525s | D **slower** (~4.7%) — a modest gap, but slightly wider than `C`'s own 3.8% round-to-round spread, so not cleanly attributable to a single noise-band estimate; regardless, D still does not beat C, which is the fact that matters for branch 1 below, so this doesn't change what fires |
+| E vs D | 9.365s vs 13.11s | E materially faster (~28.6%) — far outside any parallel config's round-to-round noise (max ~3.8%) |
 
-This reproduces the same shape as the initial grouped run, now with the cache-order confound eliminated: **D ≈ C still holds** (D does not beat C; the gap is inside measured noise) **and E is still materially faster than D**, simultaneously. These are the plan's branch 2 and branch 3 conditions, and they still both fire at once — the balanced run did not resolve the conflict, it reproduced it. Per this task's instruction, that means **do not choose a branch again; return `NEEDS_CONTEXT`** with the numbers instead of re-deriving a pick as Task 6 did.
+This reproduces the same shape as the initial grouped run, now with both the cache-order confound and the biased median-of-two statistic eliminated: branch 1 ("D materially faster than B and C") still does not apply — D never beats C — so **branch 2 ("D ≈ C") still governs** in the sense that matters for the default (no promotion of level 2), even though the corrected D-vs-C gap (~4.7%) is a little wider than the single 3.8% noise estimate this section previously (and incorrectly) called it "inside." **Branch 3 ("E materially faster than D") still fires simultaneously** (~28.6%, essentially unchanged from the pre-fix ~28.0%). Correcting the statistic changed the exact D-vs-C margin and withdrew the overstated "inside measured noise" framing, but it did not resolve the branch conflict or flip either branch's qualitative verdict. Per this task's instruction, that means **do not choose a branch again; return `NEEDS_CONTEXT`** with the numbers instead of re-deriving a pick as Task 6 did.
 
 **Decision status (as measured): NEEDS_CONTEXT.** The balanced evidence did not resolve the branch conflict on its own — it calls for a human decision between two valid readings of the plan's rule:
 
@@ -444,10 +482,10 @@ The two-way tie above was escalated and resolved by explicit human ruling rather
 
 > Ship `parallelFanOutLevels: 1` with automatic DOP. Keep deeper fan-out available explicitly; do not promote `2` or `3`. The balanced evidence is that level 2 is slightly slower than level 1 on this machine, while level 3's result is recorded as a follow-up signal rather than a default change.
 
-**Controlling measurement:** the **balanced confirmation run** (`### Balanced confirmation run` above) — median A=38.08s, B=13.94s, C=12.77s, D=13.18s, E=9.49s, with the cache-order confound eliminated. The **initial grouped run** (`### Command` / `### Raw output` at the top of this section, and its `### Decision-rule reasoning`) is retained here as **historical, first-pass evidence only**: it drove Task 6's original (methodologically confounded) pick of `1`, and its numbers happened to point the same direction as the balanced run, but it is superseded, not authoritative, precisely because the grouped `A→B→C→D→E` order structurally favored whichever config ran last (there, `E`) with the warmest filesystem cache.
+**Controlling measurement:** the **balanced confirmation run** (`### Balanced confirmation run` above), read via its corrected **arithmetic-mean** summary (`#### Fix Round 1: mean replaces a biased median-of-two`) — mean A=33.03s, B=13.88s, C=12.525s, D=13.11s, E=9.365s, with both the cache-order confound and the earlier biased median-of-two statistic eliminated. The **initial grouped run** (`### Command` / `### Raw output` at the top of this section, and its `### Decision-rule reasoning`) is retained here as **historical, first-pass evidence only**, computed by the pre-fix harness's median-of-two: it drove Task 6's original (methodologically confounded) pick of `1`, and its numbers happened to point the same direction as the corrected balanced run, but it is superseded, not authoritative, for two independent reasons — the grouped `A→B→C→D→E` order structurally favored whichever config ran last (there, `E`) with the warmest filesystem cache, and its summary statistic was the same max-of-two `Median` later found to be biased.
 
-**Why `1`, not `2`:** on the controlling (balanced) measurement, `D` (level 2, 13.18s) is slightly *slower* than `C` (level 1 at auto DOP, 12.77s) — a ~3.2% gap that sits inside `C`'s own 3.8% round-to-round noise band. Two-level fan-out therefore does not earn its complexity over root-only fan-out plus the auto-DOP bump; `parallelFanOutLevels: 2` is not promoted.
+**Why `1`, not `2`:** on the controlling (balanced, mean) measurement, `D` (level 2, 13.11s) is slightly *slower* than `C` (level 1 at auto DOP, 12.525s) — a ~4.7% gap, a little wider than `C`'s own 3.8% round-to-round spread, so not cleanly attributable to a single noise-band estimate alone. What matters for the decision rule is unaffected by that nuance: `D` does not beat `C` under either statistic, so two-level fan-out does not earn its complexity over root-only fan-out plus the auto-DOP bump; `parallelFanOutLevels: 2` is not promoted.
 
-**Why not `3` either, despite `E`'s edge:** `E` (level 3, 9.49s) was reproducibly ~28% faster than `D` on both the grouped and balanced runs — well outside measurement noise, and not explained by the cache-order confound (which affected `A` far more than any parallel config). That result is real, but it is recorded as a **future work-stealing / deeper-fan-out research signal**, not adopted as a default: it was measured on one machine and one volume (`C:\` on this machine's NVMe drive) with no evidence of how it generalizes, the plan's own decision rule treats a dramatically-better top config as a trigger for a separate work-stealing design rather than for chasing the fixed-increment knob further, and shipping an unvalidated `3` would be a materially bigger change than this task's scope. The two-level and three-level paths remain fully implemented, tested (rendezvous/equivalence/cap/deadlock/failure/cancellation in `DirectoryWalkEngineParallelTests`), and reachable via explicit `ScanTreeBudget` construction — only the zero-arg/default-arg convenience value is fixed at `1`.
+**Why not `3` either, despite `E`'s edge:** `E` (level 3, mean 9.365s) was reproducibly ~28–29% faster than `D` on the grouped run, the pre-fix balanced median, and the corrected balanced mean alike — well outside measurement noise, and not explained by the cache-order confound (which affected `A` far more than any parallel config) or by the median-vs-mean correction (both statistics agree here). That result is real, but it is recorded as a **future work-stealing / deeper-fan-out research signal**, not adopted as a default: it was measured on one machine and one volume (`C:\` on this machine's NVMe drive) with no evidence of how it generalizes, the plan's own decision rule treats a dramatically-better top config as a trigger for a separate work-stealing design rather than for chasing the fixed-increment knob further, and shipping an unvalidated `3` would be a materially bigger change than this task's scope. The two-level and three-level paths remain fully implemented, tested (rendezvous/equivalence/cap/deadlock/failure/cancellation in `DirectoryWalkEngineParallelTests`), and reachable via explicit `ScanTreeBudget` construction — only the zero-arg/default-arg convenience value is fixed at `1`.
 
 **Resulting code (final):** `ScannerCore/ScanTreeBudget.cs` default `parallelFanOutLevels` is `1`; `maxDegreeOfParallelism` default is auto (`0` → `Math.Min(Environment.ProcessorCount, 16)`). This matches current `HEAD` as committed after Task 6 and its balanced-confirmation follow-up — the human ruling makes that value **final**, not provisional, closing out the `NEEDS_CONTEXT` above. No further code change was required.

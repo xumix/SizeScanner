@@ -73,8 +73,13 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
     /// E→A — so every config gets one early-round and one late-round sample instead of the
     /// whole grouped order always measuring the last config against the warmest filesystem
     /// cache. Grouping by config (run both of its samples back-to-back, then move on) was the
-    /// order-confound that motivated this shape; per-config medians below are therefore
-    /// comparable across configs, not just across rounds.
+    /// order-confound that motivated this shape; per-config means below are therefore
+    /// comparable across configs, not just across rounds. Uses the arithmetic <see cref="Mean"/>
+    /// rather than <see cref="Median"/>: with exactly two samples, this codebase's
+    /// <c>sorted[Length / 2]</c> median always returns the larger (slower) sample, which under
+    /// monotonic cache warming systematically favors whichever position ran cold — the same
+    /// early/late bias the balanced round order was introduced to remove. A symmetric statistic
+    /// is required for the balanced order to actually be unbiased.
     /// </summary>
     [Fact]
     [Trait("Category", "Performance")]
@@ -129,7 +134,7 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
         {
             output.WriteLine(
                 $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
-                $"median={Median(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
+                $"mean={Mean(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
         }
     }
 
@@ -157,5 +162,19 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             sorted[i] = samples[i];
         Array.Sort(sorted);
         return sorted[sorted.Length / 2];
+    }
+
+    /// <summary>
+    /// Arithmetic mean, used instead of <see cref="Median"/> for the balanced fan-out matrix.
+    /// With exactly two samples, <see cref="Median"/>'s <c>sorted[Length / 2]</c> always returns
+    /// the larger (slower) sample rather than a true middle value; the mean is symmetric between
+    /// the two round positions and does not reintroduce an early/late (cold/warm cache) bias.
+    /// </summary>
+    private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+    {
+        var total = TimeSpan.Zero;
+        foreach (var sample in samples)
+            total += sample;
+        return total / samples.Count;
     }
 }
