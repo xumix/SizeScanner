@@ -73,6 +73,28 @@ public sealed class DirectoryWalkEngineParallelTests
     }
 
     [Fact]
+    public void Synthetic_tree_source_walks_a_nested_tree()
+    {
+        var tree = SyntheticNode.Dir("root",
+            SyntheticNode.Dir("a",
+                SyntheticNode.File("f1", 10),
+                SyntheticNode.Dir("b", SyntheticNode.File("f2", 20))),
+            SyntheticNode.File("f3", 5));
+        var source = new SyntheticTreeSource(@"C:\root", tree);
+
+        var result = new BoundedDirectoryWalker(source).Scan(
+            @"C:\root",
+            new ScanTreeBudget(maxDegreeOfParallelism: 1),
+            CancellationToken.None,
+            null);
+
+        Assert.Equal(35, result.Total);
+        Assert.Equal(35, result.Root.Size);
+        Assert.Equal(0, result.InaccessibleCount);
+        Assert.True(source.Probe.Peak >= 1);
+    }
+
+    [Fact]
     public void Parallel_and_sequential_walks_are_equivalent_and_bounded()
     {
         using var temp = new TemporaryDirectory();
