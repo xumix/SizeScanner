@@ -36,6 +36,10 @@ internal sealed class ConcurrencyProbe
 
     public int Peak => Volatile.Read(ref _peak);
 
+    /// <summary>Number of reads presently in flight, for asserting nothing is still
+    /// active after a scan has returned.</summary>
+    public int Current => Volatile.Read(ref _current);
+
     public IDisposable Enter()
     {
         var now = Interlocked.Increment(ref _current);

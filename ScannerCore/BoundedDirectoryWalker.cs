@@ -5,6 +5,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,6 +26,12 @@ internal sealed class BoundedDirectoryWalker(
     private readonly IDirectoryEntrySource _source = source;
     private readonly bool _parallelizeTopLevel = parallelizeTopLevel;
 
+    /// <summary>
+    /// Test-only seam for observing outstanding rentals with a tracking pool. Production
+    /// callers never set this, so every real scan rents from <see cref="ArrayPool{T}.Shared"/>.
+    /// </summary>
+    internal ArrayPool<byte> BufferPool { get; init; } = ArrayPool<byte>.Shared;
+
     internal ScanResult Scan(
         string target,
         ScanTreeBudget budget,
@@ -37,18 +44,34 @@ internal sealed class BoundedDirectoryWalker(
         var levels = _parallelizeTopLevel ? budget.ParallelFanOutLevels : 0;
 
         var context = new WalkContext(
-            _source, budget, levels, degree, token, onProgress);
+            _source, budget, levels, degree, token, onProgress, BufferPool);
 
-        // The only blocking wait in the walk, on the caller's own thread.
-        var root = WalkAsync(
-                target, target, 0, budget.MaxRetainedNodes, context)
-            .GetAwaiter().GetResult();
+        FsItem? root = null;
+        ExceptionDispatchInfo? captured = null;
+        try
+        {
+            // The only blocking wait in the walk, on the caller's own thread.
+            root = WalkAsync(
+                    target, target, 0, budget.MaxRetainedNodes, context)
+                .GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (
+            !token.IsCancellationRequested && context.Failure is { } failure)
+        {
+            captured = ExceptionDispatchInfo.Capture(failure);
+        }
+        finally
+        {
+            context.DisposeAbort();
+        }
+
+        captured?.Throw();
 
         var inaccessible = context.SnapshotInaccessible();
         var inaccessibleCount = context.InaccessibleCount;
         return new ScanResult
         {
-            Root = root,
+            Root = root!,
             Total = context.Total,
             Inaccessible = inaccessible,
             InaccessibleCount = inaccessibleCount,
@@ -70,14 +93,19 @@ internal sealed class BoundedDirectoryWalker(
 
         context.Token.ThrowIfCancellationRequested();
         await context.AcquireSlotAsync().ConfigureAwait(false);
-        var buffer = ArrayPool<byte>.Shared.Rent(DirectoryScanner.BufferSize);
+        var buffer = context.BufferPool.Rent(DirectoryScanner.BufferSize);
         try
         {
             return WalkSequential(path, name, depth, allowance, buffer, context);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Fail(ex);
+            throw;
+        }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            context.BufferPool.Return(buffer);
             context.ReleaseSlot();
         }
     }
@@ -186,35 +214,45 @@ internal sealed class BoundedDirectoryWalker(
         var pending = new List<Task<FsItem>>(context.ChildWindow);
 
         long total = 0;
-        var completed = false;
-        while (!completed)
+        try
         {
-            context.Token.ThrowIfCancellationRequested();
-            completed = await ReadBatchAsync(cursor, path, sink, context)
-                .ConfigureAwait(false);
-            total = checked(total + sink.FileSize);
-
-            foreach (var childName in sink.Directories)
+            var completed = false;
+            while (!completed)
             {
-                while (pending.Count >= context.ChildWindow)
-                    total = checked(total + await DrainOneAsync(pending, collector)
-                        .ConfigureAwait(false));
+                context.Token.ThrowIfCancellationRequested();
+                completed = await ReadBatchAsync(cursor, path, sink, context)
+                    .ConfigureAwait(false);
+                total = checked(total + sink.FileSize);
 
-                var childPath = Path.Combine(path, childName);
-                pending.Add(Task.Run(
-                    () => WalkAsync(
-                        childPath,
-                        childName,
-                        depth + 1,
-                        partition.NodesPerChild,
-                        context),
-                    context.Token));
+                foreach (var childName in sink.Directories)
+                {
+                    while (pending.Count >= context.ChildWindow)
+                        total = checked(total + await DrainOneAsync(pending, collector)
+                            .ConfigureAwait(false));
+
+                    var childPath = Path.Combine(path, childName);
+                    pending.Add(Task.Run(
+                        () => WalkAsync(
+                            childPath,
+                            childName,
+                            depth + 1,
+                            partition.NodesPerChild,
+                            context),
+                        context.Token));
+                }
             }
-        }
 
-        while (pending.Count > 0)
-            total = checked(total + await DrainOneAsync(pending, collector)
-                .ConfigureAwait(false));
+            while (pending.Count > 0)
+                total = checked(total + await DrainOneAsync(pending, collector)
+                    .ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            if (ex is not OperationCanceledException)
+                context.Fail(ex);
+            await ObserveAsync(pending).ConfigureAwait(false);
+            throw;
+        }
 
         return Complete(item, collector, allowance, total);
     }
@@ -231,7 +269,7 @@ internal sealed class BoundedDirectoryWalker(
         WalkContext context)
     {
         await context.AcquireSlotAsync().ConfigureAwait(false);
-        var buffer = ArrayPool<byte>.Shared.Rent(DirectoryScanner.BufferSize);
+        var buffer = context.BufferPool.Rent(DirectoryScanner.BufferSize);
         try
         {
             sink.Reset();
@@ -244,7 +282,7 @@ internal sealed class BoundedDirectoryWalker(
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            context.BufferPool.Return(buffer);
             context.ReleaseSlot();
         }
     }
@@ -258,6 +296,27 @@ internal sealed class BoundedDirectoryWalker(
         var child = await finished.ConfigureAwait(false);
         collector.ConsiderDirectory(child);
         return child.Size;
+    }
+
+    /// <summary>
+    /// Drains in-flight children after a failure so none of them ends up as an unobserved
+    /// task exception. The first real failure is already captured on the context.
+    /// </summary>
+    private static async Task ObserveAsync(List<Task<FsItem>> pending)
+    {
+        foreach (var task in pending)
+        {
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Secondary failures and derived cancellations are expected here.
+            }
+        }
+
+        pending.Clear();
     }
 
     private static FsItem Complete(
@@ -342,8 +401,10 @@ internal sealed class BoundedDirectoryWalker(
         private readonly List<string> _inaccessible = [];
         private readonly object _inaccessibleLock = new();
         private readonly SemaphoreSlim _slots;
+        private readonly CancellationTokenSource _abort;
         private long _total;
         private long _inaccessibleCount;
+        private Exception? _failure;
 
         public WalkContext(
             IDirectoryEntrySource source,
@@ -351,13 +412,16 @@ internal sealed class BoundedDirectoryWalker(
             int fanOutLevels,
             int degree,
             CancellationToken token,
-            Action<string, long>? onProgress)
+            Action<string, long>? onProgress,
+            ArrayPool<byte> bufferPool)
         {
             Source = source;
             Budget = budget;
             FanOutLevels = fanOutLevels;
             ChildWindow = Math.Max(2, 2 * degree);
-            Token = token;
+            BufferPool = bufferPool;
+            _abort = CancellationTokenSource.CreateLinkedTokenSource(token);
+            Token = _abort.Token;
             OnProgress = onProgress;
             _slots = new SemaphoreSlim(degree, degree);
         }
@@ -366,10 +430,12 @@ internal sealed class BoundedDirectoryWalker(
         public ScanTreeBudget Budget { get; }
         public int FanOutLevels { get; }
         public int ChildWindow { get; }
+        public ArrayPool<byte> BufferPool { get; }
         public CancellationToken Token { get; }
         private Action<string, long>? OnProgress { get; }
         public long Total => Interlocked.Read(ref _total);
         public long InaccessibleCount => Interlocked.Read(ref _inaccessibleCount);
+        public Exception? Failure => Volatile.Read(ref _failure);
 
         // The semaphore is deliberately never disposed: it holds no wait handle (we never
         // touch AvailableWaitHandle), and disposing it could fault a straggling task.
@@ -398,5 +464,17 @@ internal sealed class BoundedDirectoryWalker(
 
         public void Report(string path) =>
             OnProgress?.Invoke(path, Total);
+
+        /// <summary>
+        /// Records the first real failure and cancels the linked token so sibling subtrees
+        /// stop instead of walking to completion behind a doomed scan.
+        /// </summary>
+        public void Fail(Exception failure)
+        {
+            if (Interlocked.CompareExchange(ref _failure, failure, null) is null)
+                _abort.Cancel();
+        }
+
+        public void DisposeAbort() => _abort.Dispose();
     }
 }
