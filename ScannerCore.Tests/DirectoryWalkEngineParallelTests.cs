@@ -208,7 +208,7 @@ public sealed class DirectoryWalkEngineParallelTests
 
         new BoundedDirectoryWalker(source, parallelizeTopLevel: true).Scan(
             @"C:\root",
-            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 1),
+            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 2),
             CancellationToken.None,
             null);
 
@@ -338,7 +338,7 @@ public sealed class DirectoryWalkEngineParallelTests
 
         walker.Scan(
             @"C:\root",
-            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 1),
+            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 2),
             CancellationToken.None,
             null);
 
