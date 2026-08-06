@@ -49,6 +49,18 @@ public partial class ChartView : UserControl
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(ChartViewModel.IsChartScanning))
+        {
+            if (_subscribedVm?.IsChartScanning == true)
+            {
+                _subscribedVm.ClearHover();
+                _chart.HoveredSegment = null;
+                ToolTip.SetIsOpen(_chart, false);
+            }
+
+            return;
+        }
+
         if (e.PropertyName != nameof(ChartViewModel.HoverToolTip))
             return;
 

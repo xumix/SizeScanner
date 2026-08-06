@@ -26,6 +26,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private readonly IDriveProvider _driveProvider;
     private readonly IElevationService _elevation;
     private readonly IFolderPicker _folderPicker;
+    private readonly IDialogService _dialogs;
     private readonly UserSettings _settings;
 
     private FsItem? _scanRoot;
@@ -39,6 +40,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         IDriveProvider driveProvider,
         IElevationService elevation,
         IFolderPicker folderPicker,
+        IDialogService dialogs,
         ChartViewModel chart)
     {
         _scan = scan;
@@ -46,6 +48,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _driveProvider = driveProvider;
         _elevation = elevation;
         _folderPicker = folderPicker;
+        _dialogs = dialogs;
         Chart = chart;
         Chart.PropertyChanged += OnChartPropertyChanged;
         Chart.RootRescanned += OnChartRootRescanned;
@@ -72,7 +75,14 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     private bool _isScanning;
 
     [ObservableProperty] private bool _canRescan;
-    [ObservableProperty] private double _progressValue;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayProgressValue))]
+    private double _progressValue;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplayProgressIsIndeterminate))]
+    private bool _isProgressIndeterminate;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayStatusText))]
@@ -104,6 +114,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         : StatusText;
 
     public bool HoverStatusVisible => !IsBusy && !Chart.IsDeleting;
+
+    /// <summary>
+    /// Unified toolbar progress presentation: while the chart is running a scope-side scan
+    /// (drill-down/"Go up"/stale-root refresh), its progress drives the toolbar bar so the
+    /// user sees one progress indicator regardless of which scan is in flight. Otherwise the
+    /// toolbar's own root-scan progress is shown.
+    /// </summary>
+    public double DisplayProgressValue =>
+        Chart.IsScopeScanning ? Chart.ScopeProgressValue : ProgressValue;
+
+    public bool DisplayProgressIsIndeterminate =>
+        Chart.IsScopeScanning
+            ? Chart.IsScopeProgressIndeterminate
+            : IsProgressIndeterminate;
 
     /// <summary>
     /// A scan is in flight, from either the toolbar or a scope-side rescan. Backs toolbar
@@ -195,51 +219,59 @@ public sealed partial class MainWindowViewModel : ViewModelBase
     public async Task ScanTargetAsync(string target, bool isDrive)
     {
         // Defense in depth alongside CanStartScan()/CanExecuteRescan(): refuse to start a
-        // second RunAsync while a stale-root rescan is racing the shared ScanService.
-        if (Chart.IsScopeScanning) return;
+        // second RunAsync while another root or scope-side rescan is racing the shared
+        // ScanService.
+        if (IsBusy) return;
 
-        _scanCts?.Dispose();
-        _scanCts = new CancellationTokenSource();
-        var token = _scanCts.Token;
+        var cts = new CancellationTokenSource();
+        _scanCts = cts;
+        var token = cts.Token;
 
         SetScanningState(true);
         Chart.IsRootScanInProgress = true;
         StatusText = $"Scanning {target}...";
         StatusDetails = string.Empty;
         ProgressValue = 0;
+        IsProgressIndeterminate = true;
 
-        var progress = new Progress<ScanProgress>(OnScanProgress);
-        FsItem root;
         try
         {
-            root = await _scan.RunAsync(target, isDrive, token, progress);
+            var progress = new Progress<ScanProgress>(OnScanProgress);
+            var root = await _scan.RunAsync(target, isDrive, token, progress);
+            token.ThrowIfCancellationRequested();
+
+            _scanRoot = root;
+            PopulateInaccessible(isDrive);
+            Chart.SetScan(root, isDrive, _scan.Scanner.CurrentTarget ?? target);
+            RefreshChart();
+
+            CanRescan = true;
+            RescanCommand.NotifyCanExecuteChanged();
+            StatusText = "Ready";
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            FinishCancelled();
-            return;
+            StatusText = "Scan cancelled";
+        }
+        // An OperationCanceledException for any other token is an unexpected scan failure,
+        // not cancellation owned by this root workflow.
+        catch (Exception ex)
+        {
+            StatusText = "Scan failed";
+            await _dialogs.ShowInfoAsync("Scan failed", ex.Message);
         }
         finally
         {
             Chart.IsRootScanInProgress = false;
+            ProgressValue = 0;
+            IsProgressIndeterminate = false;
+            StatusDetails = string.Empty;
+            SetScanningState(false);
+
+            if (ReferenceEquals(_scanCts, cts))
+                _scanCts = null;
+            cts.Dispose();
         }
-
-        if (token.IsCancellationRequested) { FinishCancelled(); return; }
-
-        _scanRoot = root;
-        PopulateInaccessible(isDrive);
-
-        Chart.SetScan(root, isDrive, _scan.Scanner.CurrentTarget ?? target);
-        RefreshChart();
-
-        CanRescan = true;
-        RescanCommand.NotifyCanExecuteChanged();
-        ProgressValue = 0;
-        StatusText = "Ready";
-        StatusDetails = string.Empty;
-        SetScanningState(false);
-        _scanCts.Dispose();
-        _scanCts = null;
     }
 
     private void PopulateInaccessible(bool isDrive)
@@ -255,11 +287,19 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         RelaunchAsAdminVisible = InaccessiblePaths.Count > 0 && !_elevation.IsRunningAsAdministrator();
     }
 
-    private void OnScanProgress(ScanProgress p)
+    private void OnScanProgress(ScanProgress progress)
     {
-        if (p.PercentComplete.HasValue)
-            ProgressValue = Math.Min(p.PercentComplete.Value, 100);
-        StatusDetails = p.CurrentPath;
+        if (progress.PercentComplete.HasValue)
+        {
+            ProgressValue = Math.Min(progress.PercentComplete.Value, 100);
+            IsProgressIndeterminate = false;
+        }
+        else
+        {
+            IsProgressIndeterminate = true;
+        }
+
+        StatusDetails = progress.CurrentPath;
     }
 
     private void SetScanningState(bool scanning) => IsScanning = scanning;
@@ -280,22 +320,20 @@ public sealed partial class MainWindowViewModel : ViewModelBase
             BrowseCommand.NotifyCanExecuteChanged();
             RescanCommand.NotifyCanExecuteChanged();
         }
+
+        if (e.PropertyName is nameof(ChartViewModel.IsScopeScanning)
+            or nameof(ChartViewModel.ScopeProgressValue)
+            or nameof(ChartViewModel.IsScopeProgressIndeterminate))
+        {
+            OnPropertyChanged(nameof(DisplayProgressValue));
+            OnPropertyChanged(nameof(DisplayProgressIsIndeterminate));
+        }
     }
 
     private void OnChartRootRescanned(FsItem root)
     {
         _scanRoot = root;
         PopulateInaccessible(_scan.IsDriveScan);
-    }
-
-    private void FinishCancelled()
-    {
-        ProgressValue = 0;
-        StatusText = "Scan cancelled";
-        StatusDetails = string.Empty;
-        SetScanningState(false);
-        _scanCts?.Dispose();
-        _scanCts = null;
     }
 
     private void RefreshChart()

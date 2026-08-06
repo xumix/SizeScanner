@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -45,6 +46,19 @@ public sealed class ChartViewModelTests
     {
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingDialogs : IDialogService
+    {
+        public List<(string Title, string Message)> InfoCalls { get; } = [];
+
+        public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
+
+        public Task ShowInfoAsync(string title, string message)
+        {
+            InfoCalls.Add((title, message));
+            return Task.CompletedTask;
+        }
     }
 
     private static ChartViewModel CreateVm(FakeScanService? scan = null) =>
@@ -132,6 +146,75 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
+    public async Task TryScopeAtAsync_is_refused_while_toolbar_root_scan_is_in_progress()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        vm.IsRootScanInProgress = true;
+
+        var scoped = await vm.TryScopeAtAsync(root.Items![2]);
+
+        Assert.False(scoped);
+        Assert.Empty(scan.ScopeCalls);
+    }
+
+    [Fact]
+    public async Task Scope_scan_reports_progress_and_resets_transient_state_on_completion()
+    {
+        var scan = new FakeScanService();
+        var vm = CreateVm(scan);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingScope = pending;
+
+        var scopeTask = vm.TryScopeAtAsync(root.Items![2]);
+
+        Assert.True(vm.IsChartScanning);
+        Assert.True(vm.IsScopeProgressIndeterminate);
+        var statusChanged = PropertyChangedTestHelper.WaitForAsync(
+            vm,
+            nameof(ChartViewModel.ScopeStatusText));
+        scan.ScopeProgress!.Report(new ScanProgress("C:\\Windows\\System32", 100, null, false));
+        await statusChanged;
+        Assert.Equal("C:\\Windows\\System32", vm.ScopeStatusText);
+        Assert.True(vm.IsScopeProgressIndeterminate);
+
+        var progressChanged = PropertyChangedTestHelper.WaitForAsync(
+            vm,
+            nameof(ChartViewModel.IsScopeProgressIndeterminate));
+        scan.ScopeProgress.Report(new ScanProgress("C:\\Windows\\System32", 200, 37.5f, false));
+        await progressChanged;
+        Assert.Equal(37.5, vm.ScopeProgressValue);
+        Assert.False(vm.IsScopeProgressIndeterminate);
+
+        pending.SetResult(TestTree.Dir("Windows", TestTree.File("kernel.sys", 300)));
+        Assert.True(await scopeTask);
+        Assert.False(vm.IsChartScanning);
+        Assert.Equal(0, vm.ScopeProgressValue);
+        Assert.False(vm.IsScopeProgressIndeterminate);
+        Assert.Empty(vm.ScopeStatusText);
+    }
+
+    [Fact]
+    public void IsChartScanning_includes_toolbar_root_scan_state()
+    {
+        var vm = CreateVm();
+
+        vm.IsRootScanInProgress = true;
+
+        Assert.True(vm.IsChartScanning);
+
+        vm.IsRootScanInProgress = false;
+
+        Assert.False(vm.IsChartScanning);
+    }
+
+    [Fact]
     public async Task Scope_scan_keeps_previous_chart_visible_until_it_completes()
     {
         var scan = new FakeScanService();
@@ -142,7 +225,8 @@ public sealed class ChartViewModelTests
         var layoutBefore = vm.Layout;
 
         var windows = root.Items![2];
-        var pending = new TaskCompletionSource<FsItem>();
+        var pending = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pending;
 
         var scopeTask = vm.TryScopeAtAsync(windows);
@@ -169,17 +253,55 @@ public sealed class ChartViewModelTests
         var layoutBefore = vm.Layout;
 
         var windows = root.Items![2];
-        var pending = new TaskCompletionSource<FsItem>();
+        var pending = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         scan.PendingScope = pending;
 
         var scopeTask = vm.TryScopeAtAsync(windows);
         vm.CancelScopeScan();
-        pending.SetCanceled();
+        pending.SetCanceled(TestContext.Current.CancellationToken);
 
         Assert.False(await scopeTask);
         Assert.False(vm.IsScoped);
         Assert.False(vm.IsScopeScanning);
         Assert.Same(layoutBefore, vm.Layout);
+        Assert.False(vm.IsChartScanning);
+        Assert.Equal(0, vm.ScopeProgressValue);
+        Assert.False(vm.IsScopeProgressIndeterminate);
+        Assert.Empty(vm.ScopeStatusText);
+    }
+
+    [Fact]
+    public async Task Failed_scope_scan_leaves_chart_unchanged_and_clears_transient_state()
+    {
+        var scan = new FakeScanService();
+        var dialogs = new RecordingDialogs();
+        var vm = new ChartViewModel(scan, new NoopFs(), dialogs);
+        var root = SampleDriveRoot();
+        vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+        vm.Refresh(0f, includeFreeSpace: false);
+        var layoutBefore = vm.Layout;
+        var pending = new TaskCompletionSource<FsItem>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        scan.PendingScope = pending;
+
+        var scopeTask = vm.TryScopeAtAsync(root.Items![2]);
+        var statusChanged = PropertyChangedTestHelper.WaitForAsync(
+            vm,
+            nameof(ChartViewModel.ScopeStatusText));
+        scan.ScopeProgress!.Report(new ScanProgress("C:\\Windows\\System32", 100, null, false));
+        await statusChanged;
+
+        pending.SetException(new InvalidOperationException("boom"));
+
+        Assert.False(await scopeTask);
+        Assert.False(vm.IsScoped);
+        Assert.False(vm.IsChartScanning);
+        Assert.Same(layoutBefore, vm.Layout);
+        Assert.Equal(0, vm.ScopeProgressValue);
+        Assert.False(vm.IsScopeProgressIndeterminate);
+        Assert.Empty(vm.ScopeStatusText);
+        Assert.Equal([("Scope scan failed", "boom")], dialogs.InfoCalls);
     }
 
     [Fact]
