@@ -167,10 +167,14 @@ public sealed class DirectoryWalkEngineParallelTests
         };
     }
 
-    private static bool CompletesWithin(Task task, TimeSpan timeout) =>
-        ReferenceEquals(
-            Task.WhenAny(task, Task.Delay(timeout)).GetAwaiter().GetResult(),
-            task);
+    private static void WaitForSignal(
+        ManualResetEventSlim signal,
+        CancellationToken token,
+        string description)
+    {
+        if (!signal.Wait(TimeSpan.FromSeconds(15), token))
+            throw new TimeoutException($"Timed out waiting for {description}.");
+    }
 
     [Fact]
     public void Second_level_subtrees_are_walked_concurrently()
@@ -191,8 +195,10 @@ public sealed class DirectoryWalkEngineParallelTests
         Assert.Equal(2, rendezvous.Peak);
     }
 
-    [Fact]
-    public void Concurrent_reads_never_exceed_the_configured_degree()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Concurrent_reads_never_exceed_the_configured_degree(int levels)
     {
         var children = new List<SyntheticNode>();
         for (var d = 0; d < 16; d++)
@@ -208,7 +214,7 @@ public sealed class DirectoryWalkEngineParallelTests
 
         new BoundedDirectoryWalker(source, parallelizeTopLevel: true).Scan(
             @"C:\root",
-            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 2),
+            new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: levels),
             CancellationToken.None,
             null);
 
@@ -216,7 +222,7 @@ public sealed class DirectoryWalkEngineParallelTests
     }
 
     [Fact]
-    public void Single_slot_fan_out_completes_without_deadlock()
+    public async Task Single_slot_fan_out_completes_without_deadlock()
     {
         var tree = SyntheticNode.Dir("root",
             SyntheticNode.Dir("a", SyntheticNode.File("f", 1)),
@@ -230,54 +236,176 @@ public sealed class DirectoryWalkEngineParallelTests
             CancellationToken.None,
             null));
 
-        Assert.True(CompletesWithin(scan, TimeSpan.FromSeconds(15)), "scan did not complete");
-        Assert.Equal(3, scan.Result.Total);
+        var result = await scan.WaitAsync(
+            TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, result.Total);
     }
 
-    [Fact]
-    public void Read_failure_in_one_subtree_aborts_the_scan_with_io_exception()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Read_failure_in_one_subtree_aborts_the_scan_with_io_exception(int levels)
     {
         var tree = SyntheticNode.Dir("root",
-            SyntheticNode.Dir("good", SyntheticNode.File("f", 1)),
-            SyntheticNode.Dir("bad", SyntheticNode.File("f", 2)));
+            SyntheticNode.Dir("branch",
+                SyntheticNode.Dir("good", SyntheticNode.File("f", 1)),
+                SyntheticNode.Dir("bad", SyntheticNode.File("f", 2))));
+        var badPath = @"C:\root\branch\bad";
         var source = new SyntheticTreeSource(@"C:\root", tree)
         {
-            FailPath = @"C:\root\bad"
+            FailPath = badPath
         };
         var walker = new BoundedDirectoryWalker(source, parallelizeTopLevel: true);
 
         var scan = Task.Run(() => walker.Scan(
             @"C:\root",
-            new ScanTreeBudget(maxDegreeOfParallelism: 2, parallelFanOutLevels: 2),
+            new ScanTreeBudget(maxDegreeOfParallelism: 2, parallelFanOutLevels: levels),
             CancellationToken.None,
             null));
 
-        Assert.True(CompletesWithin(scan, TimeSpan.FromSeconds(15)), "scan did not complete");
-        Assert.IsType<IOException>(scan.Exception!.InnerException);
+        var exception = await Assert.ThrowsAsync<IOException>(
+            () => scan.WaitAsync(
+                TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken));
+
+        Assert.Contains(badPath, exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Cancellation_during_fan_out_throws_operation_canceled()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Cancellation_during_fan_out_throws_operation_canceled(int levels)
     {
-        var children = new List<SyntheticNode>();
-        for (var d = 0; d < 32; d++)
-            children.Add(SyntheticNode.Dir($"dir{d}", SyntheticNode.File("f", 1)));
-
+        const string cancelledPath = @"C:\root\branch\target";
+        var tree = SyntheticNode.Dir("root",
+            SyntheticNode.Dir("branch",
+                SyntheticNode.Dir("target", SyntheticNode.File("f", 1))));
         using var cts = new CancellationTokenSource();
-        var source = new SyntheticTreeSource(@"C:\root", SyntheticNode.Dir("root", [.. children]))
+        var source = new SyntheticTreeSource(@"C:\root", tree)
         {
-            GateRead = _ => cts.Cancel()
+            GateRead = path =>
+            {
+                if (path.Equals(cancelledPath, StringComparison.OrdinalIgnoreCase))
+                    cts.Cancel();
+            }
         };
         var walker = new BoundedDirectoryWalker(source, parallelizeTopLevel: true);
 
         var scan = Task.Run(() => walker.Scan(
             @"C:\root",
-            new ScanTreeBudget(maxDegreeOfParallelism: 2, parallelFanOutLevels: 2),
+            new ScanTreeBudget(maxDegreeOfParallelism: 2, parallelFanOutLevels: levels),
             cts.Token,
             null));
 
-        Assert.True(CompletesWithin(scan, TimeSpan.FromSeconds(15)), "scan did not complete");
-        Assert.IsAssignableFrom<OperationCanceledException>(scan.Exception!.InnerException);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => scan.WaitAsync(
+                TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Concurrent_failures_surface_the_first_captured_failure()
+    {
+        const string rootPath = @"C:\root";
+        const string firstFailurePath = @"C:\root\first\fault";
+        const string delayedPath = @"C:\root\first\delayed";
+        const string secondFailurePath = @"C:\root\second\fault";
+        const string secondBranchPath = @"C:\root\second";
+        var timeout = TimeSpan.FromSeconds(15);
+        var testToken = TestContext.Current.CancellationToken;
+
+        using var delayedReadStarted = new ManualResetEventSlim();
+        using var secondFailureReadStarted = new ManualResetEventSlim();
+        using var rootFinishedReading = new ManualResetEventSlim();
+        using var firstFailureCaptured = new ManualResetEventSlim();
+        using var releaseDelayedRead = new ManualResetEventSlim();
+        using var returnMarker = new ThreadLocal<int>();
+        var rootReadCount = 0;
+        var secondBranchDisposed = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var tree = SyntheticNode.Dir("root",
+            SyntheticNode.Dir("first",
+                SyntheticNode.Dir("fault", SyntheticNode.File("f", 1)),
+                SyntheticNode.Dir("delayed", SyntheticNode.File("f", 2))),
+            SyntheticNode.Dir("second",
+                SyntheticNode.Dir("fault", SyntheticNode.File("f", 3))));
+        var source = new SyntheticTreeSource(rootPath, tree)
+        {
+            GateRead = path =>
+            {
+                if (path.Equals(rootPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (Interlocked.Increment(ref rootReadCount) == 2)
+                        returnMarker.Value = 1;
+                    return;
+                }
+
+                if (path.Equals(delayedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    delayedReadStarted.Set();
+                    WaitForSignal(releaseDelayedRead, testToken, "the delayed first branch release");
+                    return;
+                }
+
+                if (path.Equals(firstFailurePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    WaitForSignal(delayedReadStarted, testToken, "the delayed sibling read");
+                    WaitForSignal(secondFailureReadStarted, testToken, "the second failing read");
+                    returnMarker.Value = 2;
+                    return;
+                }
+
+                if (path.Equals(secondFailurePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    secondFailureReadStarted.Set();
+                    WaitForSignal(rootFinishedReading, testToken, "the root drain loop");
+                    WaitForSignal(firstFailureCaptured, testToken, "the first captured failure");
+                }
+            },
+            ShouldFailRead = path =>
+                path.Equals(firstFailurePath, StringComparison.OrdinalIgnoreCase) ||
+                path.Equals(secondFailurePath, StringComparison.OrdinalIgnoreCase),
+            CursorDisposed = path =>
+            {
+                if (path.Equals(secondBranchPath, StringComparison.OrdinalIgnoreCase))
+                    secondBranchDisposed.TrySetResult();
+            }
+        };
+        var pool = new TrackingArrayPool(() =>
+        {
+            var marker = returnMarker.Value;
+            returnMarker.Value = 0;
+            if (marker == 1)
+                rootFinishedReading.Set();
+            else if (marker == 2)
+                firstFailureCaptured.Set();
+        });
+        var walker = new BoundedDirectoryWalker(source, parallelizeTopLevel: true)
+        {
+            BufferPool = pool
+        };
+        var scan = Task.Run(() => walker.Scan(
+            rootPath,
+            new ScanTreeBudget(maxDegreeOfParallelism: 4, parallelFanOutLevels: 2),
+            CancellationToken.None,
+            null));
+
+        try
+        {
+            await secondBranchDisposed.Task.WaitAsync(timeout, testToken);
+            releaseDelayedRead.Set();
+
+            var exception = await Assert.ThrowsAsync<IOException>(
+                () => scan.WaitAsync(timeout, testToken));
+
+            Assert.Equal(
+                $"Native directory enumeration failed for '{firstFailurePath}'.",
+                exception.Message);
+        }
+        finally
+        {
+            releaseDelayedRead.Set();
+        }
     }
 
     /// <summary>
@@ -288,8 +416,11 @@ public sealed class DirectoryWalkEngineParallelTests
     /// reaches the caller.
     /// </summary>
     [Fact]
-    public void Failed_subtree_leaves_no_sibling_reads_active_once_the_scan_returns()
+    public async Task Failed_subtree_leaves_no_sibling_reads_active_once_the_scan_returns()
     {
+        var testToken = TestContext.Current.CancellationToken;
+        using var goodSiblingReadStarted = new ManualResetEventSlim();
+        var goodSiblingReads = 0;
         var children = new List<SyntheticNode>
         {
             SyntheticNode.Dir("bad", SyntheticNode.File("f", 1))
@@ -302,8 +433,16 @@ public sealed class DirectoryWalkEngineParallelTests
             FailPath = @"C:\root\bad",
             GateRead = path =>
             {
-                if (!path.EndsWith("bad", StringComparison.OrdinalIgnoreCase))
+                if (path.EndsWith("bad", StringComparison.OrdinalIgnoreCase))
+                {
+                    WaitForSignal(goodSiblingReadStarted, testToken, "a good sibling read");
+                }
+                else if (path.Contains(@"\good", StringComparison.OrdinalIgnoreCase))
+                {
+                    Interlocked.Increment(ref goodSiblingReads);
+                    goodSiblingReadStarted.Set();
                     Thread.Sleep(300);
+                }
             }
         };
         var walker = new BoundedDirectoryWalker(source, parallelizeTopLevel: true);
@@ -314,8 +453,10 @@ public sealed class DirectoryWalkEngineParallelTests
             CancellationToken.None,
             null));
 
-        Assert.True(CompletesWithin(scan, TimeSpan.FromSeconds(15)), "scan did not complete");
-        Assert.IsType<IOException>(scan.Exception!.InnerException);
+        await Assert.ThrowsAsync<IOException>(
+            () => scan.WaitAsync(TimeSpan.FromSeconds(15), testToken));
+
+        Assert.True(Volatile.Read(ref goodSiblingReads) > 0);
         Assert.Equal(0, source.Probe.Current);
     }
 
@@ -436,10 +577,10 @@ public sealed class DirectoryWalkEngineParallelTests
             if (cursor is null)
                 return null;
 
-            // The root's own cursor stays open for the whole parallel fan-out (it is
-            // disposed only after every worker completes); excluding it isolates the
-            // metric to actual worker concurrency, which is what MaxDegreeOfParallelism
-            // bounds.
+            // At level 1 the root cursor stays open while its fan-out children finish.
+            // Excluding that parent cursor isolates concurrently open child cursors, which
+            // this characterization compares with MaxDegreeOfParallelism; deeper explicit
+            // fan-out levels can additionally keep waiting parent cursors open.
             if (path.TrimEnd(System.IO.Path.DirectorySeparatorChar)
                 .Equals(untrackedRoot.TrimEnd(System.IO.Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
                 return cursor;

@@ -228,7 +228,7 @@ Assert.Throws<OperationCanceledException>(() =>
 
 **Concurrency and Resource Bounds:**
 - Compare sequential and parallel results for total, ordering, parent links, and retained-node limits in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.
-- Use a tracking source around the real cursor to observe maximum worker concurrency; keep timing sleeps narrowly scoped and explain why they are needed.
+- Use a tracking source around the real cursor to observe level-1 fan-out child concurrency; deeper fan-out parents may keep cursors open while waiting even though active reads remain degree-bounded. Keep timing sleeps narrowly scoped and explain why they are needed.
 - Validate both exact totals and bounded retained structures with synthetic million-entry inputs in `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs` and `ScannerCore.Tests/BoundedScanMemoryTests.cs`.
 - Use unique GUID-based temporary directory names so xUnit's default class-level parallelism does not collide. No repository-wide collection disables parallel execution.
 

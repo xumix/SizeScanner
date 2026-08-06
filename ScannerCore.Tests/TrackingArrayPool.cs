@@ -1,6 +1,7 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+using System;
 using System.Buffers;
 using System.Threading;
 
@@ -14,7 +15,7 @@ namespace ScannerCore.Tests;
 /// so tests can observe rental counts without changing that default or the walker's
 /// public constructor.
 /// </summary>
-internal sealed class TrackingArrayPool : ArrayPool<byte>
+internal sealed class TrackingArrayPool(Action? onReturn = null) : ArrayPool<byte>
 {
     private int _current;
     private int _peak;
@@ -31,6 +32,7 @@ internal sealed class TrackingArrayPool : ArrayPool<byte>
     public override void Return(byte[] array, bool clearArray = false)
     {
         Interlocked.Decrement(ref _current);
+        onReturn?.Invoke();
         Shared.Return(array, clearArray);
     }
 }

@@ -399,7 +399,9 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
   sequentially on one shared slot; there are no channels or a fixed worker
   pool. `ScanTreeBudget.MaxDegreeOfParallelism` bounds concurrent native reads
   and outstanding buffer rentals, not open-cursor count, since a parent
-  cursor can stay open across an awaited child.
+  cursor can stay open across an awaited child. Per-parent windows make
+  waiting fan-out-parent cursor/task growth geometric across explicit deeper
+  levels, which is why levels `2`/`3` remain non-default at high degree.
 - **Scan serialization:** Root and scope workflows must not race a shared,
   stateful root `DriveScanner`. `MainWindowViewModel.IsBusy`,
   `ChartViewModel.IsScopeScanning`, and `IsRootScanInProgress` enforce this.
@@ -509,6 +511,11 @@ at the application boundary.
   `ScanEngineSelector` can try a fallback engine
   (`ScannerCore/BoundedDirectoryWalker.cs`,
   `ScannerCore/ScanEngineSelector.cs`).
+- Fan-out records the first internal non-cancellation failure, aborts and
+  observes in-flight siblings, then rethrows that first failure even if a
+  secondary exception reaches the synchronous scan boundary first. Caller
+  cancellation takes precedence, and neither path publishes a partial tree
+  (`ScannerCore/BoundedDirectoryWalker.cs`).
 - Scoped scan exceptions are displayed through `IDialogService`, while the
   current chart remains unchanged
   (`SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`).

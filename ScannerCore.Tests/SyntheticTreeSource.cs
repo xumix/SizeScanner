@@ -111,6 +111,12 @@ internal sealed class SyntheticTreeSource : IDirectoryEntrySource
     /// <summary>Reads of this directory return <see cref="DirectoryBatchResult.Failed"/>.</summary>
     public string? FailPath { get; set; }
 
+    /// <summary>Returns true for any additional directory reads that should fail.</summary>
+    public Func<string, bool>? ShouldFailRead { get; set; }
+
+    /// <summary>Invoked when a synthetic directory cursor is disposed.</summary>
+    public Action<string>? CursorDisposed { get; set; }
+
     public IDirectoryEntryCursor? Open(string path)
     {
         var normalized = Normalize(path);
@@ -141,7 +147,8 @@ internal sealed class SyntheticTreeSource : IDirectoryEntrySource
             using var scope = owner.Probe.Enter();
             owner.GateRead?.Invoke(path);
 
-            if (string.Equals(path, owner.FailPath, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(path, owner.FailPath, StringComparison.OrdinalIgnoreCase) ||
+                owner.ShouldFailRead?.Invoke(path) == true)
                 return DirectoryBatchResult.Failed;
 
             if (_index >= node.Children.Count)
@@ -157,6 +164,6 @@ internal sealed class SyntheticTreeSource : IDirectoryEntrySource
             return DirectoryBatchResult.Entries;
         }
 
-        public void Dispose() { }
+        public void Dispose() => owner.CursorDisposed?.Invoke(path);
     }
 }

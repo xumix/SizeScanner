@@ -9,6 +9,19 @@ public sealed record ScanTreeBudget
 {
     public static ScanTreeBudget Default { get; } = new();
 
+    /// <summary>Initializes scan retention and traversal concurrency limits.</summary>
+    /// <param name="maxRetainedNodes">
+    /// Maximum number of nodes retained in the bounded snapshot, including its root.
+    /// </param>
+    /// <param name="maxChildrenPerDirectory">
+    /// Maximum number of individual children retained for each directory.
+    /// </param>
+    /// <param name="maxRetainedDepth">
+    /// Maximum retained snapshot depth, counting the root as the first level.
+    /// </param>
+    /// <param name="maxInaccessiblePaths">
+    /// Maximum number of inaccessible path samples retained in the scan result.
+    /// </param>
     /// <param name="maxDegreeOfParallelism">
     /// Shared slots for concurrent native reads and sequential subtree walks.
     /// Zero resolves to <c>Math.Min(Environment.ProcessorCount, 16)</c>.

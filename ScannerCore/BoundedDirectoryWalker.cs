@@ -55,10 +55,14 @@ internal sealed class BoundedDirectoryWalker(
                     target, target, 0, budget.MaxRetainedNodes, context)
                 .GetAwaiter().GetResult();
         }
-        catch (OperationCanceledException) when (
-            !token.IsCancellationRequested && context.Failure is { } failure)
+        catch (Exception ex)
         {
-            captured = ExceptionDispatchInfo.Capture(failure);
+            var propagated = token.IsCancellationRequested
+                ? ex is OperationCanceledException
+                    ? ex
+                    : new OperationCanceledException(token)
+                : context.Failure ?? ex;
+            captured = ExceptionDispatchInfo.Capture(propagated);
         }
         finally
         {

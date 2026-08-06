@@ -110,8 +110,19 @@ Rent from `ArrayPool<byte>.Shared` **after** acquiring a slot and return **befor
 
 ### Handles
 
-A fan-out parent keeps its cursor open across awaits, so open cursors are bounded by
-`1 + (levels − 1) × window + degree` — roughly 50 handles at DOP 16, levels 2 (an illustrative example at an explicit non-default level; the shipped default is `levels = 1`, which reduces this to `1 + degree`). This is stated rather than asserted; the concurrency assertion targets `ReadNext`.
+A fan-out parent keeps its cursor open across child awaits, and every parent has its own
+window `W = 2 × DOP`. The worst-case fan-out-parent cursor bound is therefore geometric,
+`Σ(i = 0 .. levels − 1) W^i`, not linear. Add up to `DOP` active sequential subtrees
+(each of which can hold its normal recursive cursor chain); queued sequential-child tasks
+do not open cursors until they acquire a slot. Fan-out task growth is likewise geometric:
+up to `Σ(i = 1 .. levels) W^i` in-flight child tasks across all per-parent windows.
+
+At DOP 16 (`W = 32`), level 1 has one fan-out-parent cursor plus at most 16 active
+sequential subtrees. Explicit level 2 can reach `1 + 32 = 33` fan-out-parent cursors plus
+those subtrees (roughly the earlier 50-handle characterization), while level 3 can reach
+`1 + 32 + 1,024 = 1,057` fan-out-parent cursors before adding sequential recursion.
+This geometric cursor/task growth is why levels 2 and 3 remain non-default and risky at
+high DOP even though concurrent `ReadNext` calls and pooled buffers stay DOP-bounded.
 
 ### Collector ownership
 
@@ -176,10 +187,10 @@ No new engine parameters; `IScanEngine.Scan` and `ScanResult` are unchanged.
 1. **Long-pole rendezvous (the point of the change).** Tree: root → one child → two grandchildren, `ParallelFanOutLevels = 2`, `MaxDegreeOfParallelism = 2`. Both grandchild reads gate on observing concurrency 2. Passes under two-level fan-out; times out under root-only, which is exactly the regression being fixed. Deterministic — no wall-clock comparison.
 2. **Negative control.** Same tree at `ParallelFanOutLevels = 1` never reaches concurrency 2 (short timeout).
 3. **Full equivalence.** Recursive comparison of the entire retained tree (names, sizes, `IsDir`, `HasUnretainedChildren`, `Items == null`) plus `Total`, `InaccessibleCount`, across sequential vs levels 1 vs levels 2, and across two different DOP values.
-4. **Concurrency cap.** Peak concurrent `ReadNext` ≤ DOP under two-level fan-out on a deep, wide synthetic tree.
+4. **Concurrency cap.** Peak concurrent `ReadNext` ≤ DOP under explicit two- and three-level fan-out on a deep, wide synthetic tree.
 5. **No deadlock under scarcity.** Nested fan-out with `MaxDegreeOfParallelism = 1` and `ParallelFanOutLevels = 2` completes (single slot forces every parent to release before children can run).
-6. **Failure propagation.** A cursor that returns `DirectoryBatchResult.Failed` deep in one subtree surfaces `IOException` from `Scan` (not `OperationCanceledException`, not `AggregateException`) and does not hang.
-7. **Cancellation.** Cancelled token throws `OperationCanceledException` under two-level fan-out.
+6. **Failure propagation.** A cursor that returns `DirectoryBatchResult.Failed` deep in one subtree surfaces `IOException` from `Scan` (not `OperationCanceledException`, not `AggregateException`) and does not hang at explicit fan-out levels 2 or 3. Concurrent independent failures surface the first internally captured failure after every sibling is observed.
+7. **Cancellation.** Cancelled token throws `OperationCanceledException` under explicit fan-out levels 2 and 3.
 8. **Policy off.** `new DirectoryWalkEngine(_ => false)` stays sequential and correct.
 9. **Budget validation.** `parallelFanOutLevels: -1` rejected; `0` disables fan-out; `1` is root-only.
 10. **Memory.** Existing `BoundedScanMemoryTests` still pass, plus a wide-directory fan-out case asserting retained nodes stay within budget.
