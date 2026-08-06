@@ -59,30 +59,5 @@ namespace ScannerCore
             return count;
         }
 
-        public bool TryGetPathFrom(FsItem root, out string path)
-        {
-            if (ReferenceEquals(this, root))
-            {
-                path = root.Name;
-                return true;
-            }
-
-            var segments = new List<string>();
-            for (var current = this; !ReferenceEquals(current, root); current = current.Parent!)
-            {
-                segments.Add(current.Name);
-                if (current.Parent == null)
-                {
-                    path = string.Empty;
-                    return false;
-                }
-            }
-
-            segments.Add(root.Name);
-            segments.Reverse();
-
-            path = Path.Join(segments.ToArray());
-            return true;
-        }
     }
 }

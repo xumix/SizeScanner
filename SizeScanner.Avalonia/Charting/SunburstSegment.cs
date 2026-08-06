@@ -18,9 +18,13 @@ public sealed record SunburstSegment(
 {
     public double EndAngle => StartAngle + SweepAngle;
 
-    public bool IsActionable =>
-        Node is not null
-        && !ChartNodeRules.IsSyntheticSegment(Node);
+    /// <summary>
+    /// Whether the segment takes part in hit-testing, and so can be hovered for a status
+    /// path and tooltip. Synthetic bands such as <c>[Free space]</c> and <c>[Other]</c> are
+    /// included: they are hoverable but not clickable. What a click may do is a separate
+    /// question answered per node by <see cref="ChartNodeRules"/>.
+    /// </summary>
+    public bool IsHitTestable => Node is not null;
 
     public override string ToString() =>
         $"{DisplayName} Size: ({Humanize.Size(Size)})";

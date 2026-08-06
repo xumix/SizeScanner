@@ -17,7 +17,7 @@ public static class ChartNodeRules
         item?.Name == DriveScanMetadata.InaccessibleName;
 
     public static bool IsAggregate(FsItem? item) =>
-        item?.Kind == FsItemKind.Aggregate;
+        item?.IsAggregate == true;
 
     public static bool IsSyntheticSegment(FsItem? item) =>
         item is null

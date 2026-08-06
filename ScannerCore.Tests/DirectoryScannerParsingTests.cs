@@ -30,27 +30,6 @@ public sealed class DirectoryScannerParsingTests
     }
 
     [Fact]
-    public void Scan_excludes_dot_directories()
-    {
-        using var temp = new TemporaryDirectory();
-        temp.CreateFile("only.txt", 1);
-
-        var scanner = new DirectoryScanner(preferAllocatedSize: false);
-        var (entries, _) = ScanAll(scanner, temp.Path + System.IO.Path.DirectorySeparatorChar);
-
-        Assert.NotNull(entries);
-        Assert.DoesNotContain(entries!, e => e.Name is "." or "..");
-    }
-
-    [Fact]
-    public void Scan_returns_null_for_missing_directory()
-    {
-        var scanner = new DirectoryScanner(preferAllocatedSize: false);
-        var (entries, _) = ScanAll(scanner, @"X:\does\not\exist\");
-        Assert.Null(entries);
-    }
-
-    [Fact]
     public void Scan_is_safe_to_call_concurrently()
     {
         using var temp = new TemporaryDirectory();
@@ -68,7 +47,7 @@ public sealed class DirectoryScannerParsingTests
         Assert.All(totals, t => Assert.Equal(totals[0], t));
     }
 
-    private static (List<FsItem>? Entries, long Processed) ScanAll(
+    private static (List<(string Name, long Size, bool IsDirectory)>? Entries, long Processed) ScanAll(
         DirectoryScanner scanner, string dir)
     {
         var cursor = ((IDirectoryEntrySource)scanner).Open(dir);
@@ -77,7 +56,7 @@ public sealed class DirectoryScannerParsingTests
 
         using (cursor)
         {
-            var sink = new CollectingSink();
+            var sink = new RecordingEntrySink();
             var rented = ArrayPool<byte>.Shared.Rent(DirectoryScanner.BufferSize);
             try
             {
@@ -91,19 +70,7 @@ public sealed class DirectoryScannerParsingTests
                 ArrayPool<byte>.Shared.Return(rented);
             }
 
-            return (sink.Items, sink.Size);
-        }
-    }
-
-    private sealed class CollectingSink : IDirectoryEntrySink
-    {
-        public List<FsItem> Items { get; } = new();
-        public long Size { get; private set; }
-
-        public void OnEntry(ReadOnlySpan<char> name, long size, bool isDirectory)
-        {
-            Items.Add(new FsItem(new string(name), size, isDirectory));
-            Size += size;
+            return (sink.Entries, sink.Size);
         }
     }
 }

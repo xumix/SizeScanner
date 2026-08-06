@@ -103,9 +103,15 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         : Chart.IsScopeScanning ? BuildScopeScanningStatusText()
         : StatusText;
 
-    public bool HoverStatusVisible => !IsScanning && !Chart.IsDeleting && !Chart.IsScopeScanning;
+    public bool HoverStatusVisible => !IsBusy && !Chart.IsDeleting;
 
-    /// <summary>Backs toolbar IsEnabled bindings; mirrors <see cref="CanStartScan"/> for XAML.</summary>
+    /// <summary>
+    /// A scan is in flight, from either the toolbar or a scope-side rescan. Backs toolbar
+    /// IsEnabled bindings, and gates every scan-start action via <see cref="CanStartScan"/>:
+    /// a stale "Go to root"/"Go up" rescan also calls the shared
+    /// <see cref="IScanService.RunAsync"/>, so the toolbar must stay disabled for that too or
+    /// two RunAsync calls can race the same non-thread-safe DriveScanner.
+    /// </summary>
     public bool IsBusy => IsScanning || Chart.IsScopeScanning;
 
     private string BuildScopeScanningStatusText() =>
@@ -137,13 +143,7 @@ public sealed partial class MainWindowViewModel : ViewModelBase
         _suppressOptionChanges = false;
     }
 
-    /// <summary>
-    /// Gates every toolbar scan-start action, not just <see cref="IsScanning"/>: a stale
-    /// "Go to root"/"Go up" rescan (<c>Chart.IsScopeScanning</c>) also calls the shared
-    /// <see cref="IScanService.RunAsync"/>, so the toolbar must stay disabled for that too
-    /// or two RunAsync calls can race the same non-thread-safe DriveScanner.
-    /// </summary>
-    private bool CanStartScan() => !IsScanning && !Chart.IsScopeScanning;
+    private bool CanStartScan() => !IsBusy;
 
     private bool CanExecuteRescan() => CanRescan && CanStartScan();
 

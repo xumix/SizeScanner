@@ -230,7 +230,7 @@ public sealed class SunburstChartBuilderTests
     }
 
     [Fact]
-    public void Scanner_aggregate_renders_as_other_and_is_not_actionable()
+    public void Scanner_aggregate_renders_as_other_and_is_hoverable_but_not_clickable()
     {
         var root = TestTree.Dir("root",
             TestTree.File("kept", 80),
@@ -242,7 +242,9 @@ public sealed class SunburstChartBuilderTests
             segment => segment.DisplayName == ChartDisplayMetadata.OtherName);
 
         Assert.Equal(20, other.Size);
-        Assert.False(other.IsActionable);
+        Assert.True(other.IsHitTestable);
+        Assert.False(ChartNodeRules.IsScopable(other.Node));
+        Assert.True(ChartNodeRules.SuppressesContextMenu(other.Node));
     }
 
     [Fact]

@@ -25,7 +25,7 @@ public static class SunburstHitTest
             return null;
 
         var angle = (Math.Atan2(dy, dx) * 180d / Math.PI + 90d + 360d) % 360d;
-        var ring = chart.ActionableSegmentsByRing(ringIndex.Value);
+        var ring = chart.HitTestableSegmentsByRing(ringIndex.Value);
         if (ring.Count == 0)
             return null;
 

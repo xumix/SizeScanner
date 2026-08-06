@@ -185,7 +185,7 @@ public sealed class SunburstChartBuilder
 
     private List<PendingParent> EmitRing(IReadOnlyList<PendingParent> parents, int ring, ref int budget)
     {
-        var candidates = new List<(int ParentIndex, FsItem Child)>();
+        var candidates = new List<(int ParentIndex, FsItem Child, long Displayed)>();
         var parentStates = new ParentRingState[parents.Count];
 
         for (var p = 0; p < parents.Count; p++)
@@ -208,7 +208,7 @@ public sealed class SunburstChartBuilder
                     if (displayed <= 0)
                         continue;
 
-                    candidates.Add((p, child));
+                    candidates.Add((p, child, displayed));
                     state.VisibleCount++;
                     state.TotalDisplayed += displayed;
                     state.TotalSize += child.Size;
@@ -218,24 +218,23 @@ public sealed class SunburstChartBuilder
             parentStates[p] = state;
         }
 
-        candidates.Sort((a, b) =>
+        candidates.Sort(static (a, b) =>
         {
-            var cmp = DisplayedOf(b.Child).CompareTo(DisplayedOf(a.Child));
+            var cmp = b.Displayed.CompareTo(a.Displayed);
             return cmp != 0
                 ? cmp
-                : string.Compare(a.Child.Name, b.Child.Name, StringComparison.Ordinal);
+                : string.CompareOrdinal(a.Child.Name, b.Child.Name);
         });
 
         var nextFrontier = new List<PendingParent>();
 
-        foreach (var (parentIndex, child) in candidates)
+        foreach (var (parentIndex, child, childDisplayed) in candidates)
         {
             if (budget <= 0 || _segments.Count >= MaxSegments)
                 break;
 
             var parent = parents[parentIndex];
             var state = parentStates[parentIndex];
-            var childDisplayed = DisplayedOf(child);
             var childSweep = parent.Sweep * childDisplayed / parent.Denominator;
 
             if (IsLayoutCollapsedFile(child, ring))

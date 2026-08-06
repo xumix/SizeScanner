@@ -98,9 +98,9 @@ public sealed class DirectoryWalkEngineParallelTests
             new DirectoryScanner(preferAllocatedSize: false), temp.Path, TrackOpen);
 
         var sequential = new BoundedDirectoryWalker(new DirectoryScanner(preferAllocatedSize: false), parallelizeTopLevel: false)
-            .Scan(temp.Path, isDriveScan: false, budget, CancellationToken.None, null);
+            .Scan(temp.Path, budget, CancellationToken.None, null);
         var parallel = new BoundedDirectoryWalker(trackedSource, parallelizeTopLevel: true)
-            .Scan(temp.Path, isDriveScan: false, budget, CancellationToken.None, null);
+            .Scan(temp.Path, budget, CancellationToken.None, null);
 
         Assert.Equal(sequential.Total, parallel.Total);
         Assert.Equal(

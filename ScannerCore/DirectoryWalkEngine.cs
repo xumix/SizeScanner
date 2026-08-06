@@ -27,6 +27,6 @@ public sealed class DirectoryWalkEngine : IScanEngine
     {
         var source = new DirectoryScanner(preferAllocatedSize: isDriveScan);
         return new BoundedDirectoryWalker(source, parallelizeTopLevel: _shouldParallelize(target))
-            .Scan(target, isDriveScan, budget, token, onProgress);
+            .Scan(target, budget, token, onProgress);
     }
 }

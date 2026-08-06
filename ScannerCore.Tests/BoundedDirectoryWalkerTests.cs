@@ -24,8 +24,7 @@ public sealed class BoundedDirectoryWalkerTests
             maxRetainedDepth: 6);
 
         var result = new BoundedDirectoryWalker(source).Scan(
-            @"C:\wide", false, budget,
-            CancellationToken.None, null);
+            @"C:\wide", budget, CancellationToken.None, null);
 
         Assert.Equal(4_000_000, result.Total);
         Assert.Equal(4_000_000, result.Root.Size);
@@ -47,8 +46,7 @@ public sealed class BoundedDirectoryWalkerTests
             maxRetainedDepth: 3);
 
         var result = new BoundedDirectoryWalker(source).Scan(
-            temp.Path, false, budget,
-            CancellationToken.None, null);
+            temp.Path, budget, CancellationToken.None, null);
 
         Assert.Equal(7, result.Total);
         Assert.True(MaxDepth(result.Root) <= 4);
@@ -63,8 +61,7 @@ public sealed class BoundedDirectoryWalkerTests
         var budget = ScanTreeBudget.Default;
 
         var result = new BoundedDirectoryWalker(source).Scan(
-            @"C:\missing", false, budget,
-            CancellationToken.None, null);
+            @"C:\missing", budget, CancellationToken.None, null);
 
         Assert.Null(result.Root.Items);
         Assert.Equal(1, result.InaccessibleCount);
@@ -85,8 +82,7 @@ public sealed class BoundedDirectoryWalkerTests
             maxInaccessiblePaths: 5);
 
         var result = new BoundedDirectoryWalker(source).Scan(
-            @"C:\root", false, budget,
-            CancellationToken.None, null);
+            @"C:\root", budget, CancellationToken.None, null);
 
         Assert.Equal(20, result.InaccessibleCount);
         Assert.Equal(5, result.Inaccessible.Count);
@@ -104,8 +100,7 @@ public sealed class BoundedDirectoryWalkerTests
 
         Assert.Throws<OperationCanceledException>(() =>
             new BoundedDirectoryWalker(source).Scan(
-                temp.Path, false, ScanTreeBudget.Default,
-                cts.Token, null));
+                temp.Path, ScanTreeBudget.Default, cts.Token, null));
     }
 
     private static int MaxDepth(FsItem item) =>

@@ -1,8 +1,6 @@
 // Copyright (C) SizeScanner contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ScannerCore;
@@ -24,7 +22,7 @@ public sealed class DirectoryEntryCursorTests
             temp.Path + Path.DirectorySeparatorChar);
         Assert.NotNull(cursor);
 
-        var sink = new RecordingSink();
+        var sink = new RecordingEntrySink();
         var buffer = new byte[512];
         var batchCount = 0;
         while (cursor!.ReadNext(buffer, sink) == DirectoryBatchResult.Entries)
@@ -32,7 +30,7 @@ public sealed class DirectoryEntryCursorTests
 
         Assert.True(batchCount >= 2, $"Expected multiple native batches, got {batchCount}.");
         Assert.Equal(320, sink.Size);
-        Assert.Equal(32, sink.Names.Count);
+        Assert.Equal(32, sink.Entries.Count);
     }
 
     [Fact]
@@ -54,27 +52,12 @@ public sealed class DirectoryEntryCursorTests
             temp.Path + Path.DirectorySeparatorChar);
         Assert.NotNull(cursor);
 
-        var sink = new RecordingSink();
+        var sink = new RecordingEntrySink();
         var buffer = new byte[DirectoryScanner.BufferSize];
         while (cursor!.ReadNext(buffer, sink) == DirectoryBatchResult.Entries)
         {
         }
 
         Assert.DoesNotContain(sink.Names, n => n is "." or "..");
-    }
-
-    private sealed class RecordingSink : IDirectoryEntrySink
-    {
-        public List<string> Names { get; } = [];
-        public long Size { get; private set; }
-
-        public void OnEntry(
-            ReadOnlySpan<char> name,
-            long size,
-            bool isDirectory)
-        {
-            Names.Add(name.ToString());
-            Size += size;
-        }
     }
 }

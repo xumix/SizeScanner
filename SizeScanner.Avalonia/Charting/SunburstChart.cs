@@ -15,10 +15,10 @@ public sealed record SunburstChart(
     private IReadOnlyList<SunburstSegment>[]? _ringIndex;
 
     /// <summary>
-    /// Actionable segments on the given ring, sorted ascending by <see cref="SunburstSegment.StartAngle"/>.
+    /// Hit-testable segments on the given ring, sorted ascending by <see cref="SunburstSegment.StartAngle"/>.
     /// Built lazily on first use and reused for subsequent hit tests.
     /// </summary>
-    public IReadOnlyList<SunburstSegment> ActionableSegmentsByRing(int ringIndex)
+    public IReadOnlyList<SunburstSegment> HitTestableSegmentsByRing(int ringIndex)
     {
         _ringIndex ??= BuildRingIndex();
         return ringIndex >= 0 && ringIndex < _ringIndex.Length
@@ -34,7 +34,7 @@ public sealed record SunburstChart(
             buckets[r] = new List<SunburstSegment>();
 
         foreach (var segment in Segments)
-            if (segment.IsActionable && segment.RingIndex >= 0 && segment.RingIndex < ringCount)
+            if (segment.IsHitTestable && segment.RingIndex >= 0 && segment.RingIndex < ringCount)
                 buckets[segment.RingIndex].Add(segment);
 
         var result = new IReadOnlyList<SunburstSegment>[ringCount];

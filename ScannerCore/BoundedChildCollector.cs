@@ -3,14 +3,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ScannerCore
 {
     public sealed class BoundedChildCollector
     {
         private readonly int _maxChildren;
-        private readonly PriorityQueue<FsItem, ItemPriority> _kept = new();
+        private readonly PriorityQueue<FsItem, FsItem> _kept = new(RetentionOrder.Instance);
         private long _hiddenSize;
         private int _hiddenCount;
 
@@ -39,17 +38,20 @@ namespace ScannerCore
                 return true;
 
             _kept.TryPeek(out var worst, out _);
-            return size > worst!.Size
-                || size == worst.Size
-                && name.CompareTo(
-                    worst.Name.AsSpan(), StringComparison.Ordinal) < 0;
+            return RetentionOrder.Compare(size, name, worst!) > 0;
         }
 
         private void Consider(FsItem candidate)
         {
-            _kept.Enqueue(candidate, ItemPriority.For(candidate));
-            if (_kept.Count > _maxChildren)
-                Hide(_kept.Dequeue().Size);
+            if (_kept.Count < _maxChildren)
+            {
+                _kept.Enqueue(candidate, candidate);
+                return;
+            }
+
+            // The window is full, so admitting the candidate evicts the worst of the
+            // window plus the candidate itself in a single sift.
+            Hide(_kept.EnqueueDequeue(candidate, candidate).Size);
         }
 
         private void Hide(long size)
@@ -60,11 +62,11 @@ namespace ScannerCore
 
         public List<FsItem> BuildChildren()
         {
-            var children = _kept.UnorderedItems
-                .Select(item => item.Element)
-                .OrderByDescending(item => item.Size)
-                .ThenBy(item => item.Name, StringComparer.Ordinal)
-                .ToList();
+            var children = new List<FsItem>(_kept.Count + 1);
+            foreach (var (element, _) in _kept.UnorderedItems)
+                children.Add(element);
+
+            children.Sort(static (a, b) => RetentionOrder.Instance.Compare(b, a));
 
             if (_hiddenCount > 0)
                 children.Add(FsItem.CreateAggregate(_hiddenSize));
@@ -73,18 +75,29 @@ namespace ScannerCore
 
         public bool HasHiddenChildren => _hiddenCount > 0;
 
-        private readonly record struct ItemPriority(long Size, string Name)
-            : IComparable<ItemPriority>
+        /// <summary>
+        /// The single retention order: greater means "keep in preference to". Larger size
+        /// wins, and equal sizes are broken by the ordinally smaller name. The queue head is
+        /// therefore the worst retained child, and <see cref="BuildChildren"/> reverses this
+        /// order for display.
+        /// </summary>
+        private sealed class RetentionOrder : IComparer<FsItem>
         {
-            public static ItemPriority For(FsItem item) =>
-                new(item.Size, item.Name);
+            public static readonly RetentionOrder Instance = new();
 
-            public int CompareTo(ItemPriority other)
+            public int Compare(FsItem? x, FsItem? y) =>
+                Compare(x!.Size, x.Name.AsSpan(), y!);
+
+            /// <summary>
+            /// Span overload so a candidate can be ranked before its name is allocated
+            /// as a managed string.
+            /// </summary>
+            public static int Compare(long size, ReadOnlySpan<char> name, FsItem other)
             {
-                var bySize = Size.CompareTo(other.Size);
+                var bySize = size.CompareTo(other.Size);
                 return bySize != 0
                     ? bySize
-                    : -StringComparer.Ordinal.Compare(Name, other.Name);
+                    : -name.CompareTo(other.Name.AsSpan(), StringComparison.Ordinal);
             }
         }
     }

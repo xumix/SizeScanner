@@ -120,41 +120,56 @@ public sealed partial class ChartViewModel : ViewModelBase
 
     public void CancelScopeScan() => _scopeCts?.Cancel();
 
-    public async Task<bool> TryScopeAtAsync(FsItem node)
+    public Task<bool> TryScopeAtAsync(FsItem node) =>
+        !CanScopeTo(node) || IsScopeScanning
+            ? Task.FromResult(false)
+            : ScopeToPathAsync(BuildFullPath(AncestorChain(node)));
+
+    private async Task<bool> ScopeToPathAsync(string path)
     {
-        if (!CanScopeTo(node) || IsScopeScanning)
+        var scanned = await RunChartScanAsync(
+            (token, progress) => _scan.RunScopeAsync(
+                path, token, progress, ScanTreeBudget.Default, preferAllocatedSize: _isDriveScan),
+            "Scope scan failed");
+        if (scanned is null)
             return false;
 
-        var path = BuildFullPath(AncestorChain(node));
+        // Replacing rather than pushing preserves the "root tree + current
+        // scope tree" memory bound: the previous scope tree has no owner
+        // left and becomes collectible, and no scope history is kept.
+        _scopedRoot = scanned;
+        _scopePath = path;
+        UpdateScopeState();
+        RebuildLayout();
+        return true;
+    }
+
+    /// <summary>
+    /// Runs one chart-initiated scan under the cancellation, status-text, and error handling
+    /// shared by scoping, "Go up", and a stale-root refresh. Returns null when the scan was
+    /// cancelled or failed, in which case the caller leaves the current chart unchanged.
+    /// </summary>
+    private async Task<FsItem?> RunChartScanAsync(
+        Func<CancellationToken, IProgress<ScanProgress>, Task<FsItem>> scan,
+        string failureTitle)
+    {
         using var cts = new CancellationTokenSource();
         _scopeCts = cts;
         IsScopeScanning = true;
         try
         {
-            var scanned = await _scan.RunScopeAsync(
-                path,
+            return await scan(
                 cts.Token,
-                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath),
-                ScanTreeBudget.Default,
-                preferAllocatedSize: _isDriveScan);
-
-            // Replacing rather than pushing preserves the "root tree + current
-            // scope tree" memory bound: the previous scope tree has no owner
-            // left and becomes collectible, and no scope history is kept.
-            _scopedRoot = scanned;
-            _scopePath = path;
-            UpdateScopeState();
-            RebuildLayout();
-            return true;
+                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            return false;
+            return null;
         }
         catch (Exception ex)
         {
-            await _dialogs.ShowInfoAsync("Scope scan failed", ex.Message);
-            return false;
+            await _dialogs.ShowInfoAsync(failureTitle, ex.Message);
+            return null;
         }
         finally
         {
@@ -180,7 +195,7 @@ public sealed partial class ChartViewModel : ViewModelBase
             return;
         }
 
-        await RescanScopeAsync(parent);
+        await ScopeToPathAsync(parent);
     }
 
     [RelayCommand]
@@ -198,34 +213,12 @@ public sealed partial class ChartViewModel : ViewModelBase
             return;
         }
 
-        using var cts = new CancellationTokenSource();
-        _scopeCts = cts;
-        IsScopeScanning = true;
-        FsItem scanned;
-        try
-        {
-            scanned = await _scan.RunAsync(
-                _rootPath,
-                _isDriveScan,
-                cts.Token,
-                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath),
-                ScanTreeBudget.Default);
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
+        var scanned = await RunChartScanAsync(
+            (token, progress) => _scan.RunAsync(
+                _rootPath, _isDriveScan, token, progress, ScanTreeBudget.Default),
+            "Root scan failed");
+        if (scanned is null)
             return;
-        }
-        catch (Exception ex)
-        {
-            await _dialogs.ShowInfoAsync("Root scan failed", ex.Message);
-            return;
-        }
-        finally
-        {
-            _scopeCts = null;
-            IsScopeScanning = false;
-            ScopeStatusText = string.Empty;
-        }
 
         _scanRoot = scanned;
         _chartRootWithoutFreeSpace = BuildChartRootWithoutFreeSpace(scanned, _isDriveScan);
@@ -238,43 +231,11 @@ public sealed partial class ChartViewModel : ViewModelBase
         RebuildLayout();
     }
 
-    private async Task RescanScopeAsync(string path)
-    {
-        using var cts = new CancellationTokenSource();
-        _scopeCts = cts;
-        IsScopeScanning = true;
-        try
-        {
-            var scanned = await _scan.RunScopeAsync(
-                path,
-                cts.Token,
-                new Progress<ScanProgress>(progress => ScopeStatusText = progress.CurrentPath),
-                ScanTreeBudget.Default,
-                preferAllocatedSize: _isDriveScan);
-
-            _scopedRoot = scanned;
-            _scopePath = path;
-            UpdateScopeState();
-            RebuildLayout();
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            // Leave the current chart unchanged.
-        }
-        catch (Exception ex)
-        {
-            await _dialogs.ShowInfoAsync("Scope scan failed", ex.Message);
-        }
-        finally
-        {
-            _scopeCts = null;
-            IsScopeScanning = false;
-            ScopeStatusText = string.Empty;
-        }
-    }
-
     private static bool PathsEqual(string a, string b) =>
-        string.Equals(a.TrimEnd('\\'), b.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        string.Equals(TrimSeparators(a), TrimSeparators(b), StringComparison.OrdinalIgnoreCase);
+
+    private static string TrimSeparators(string path) =>
+        path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     public void SetContextTarget(FsItem? node)
     {

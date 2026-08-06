@@ -27,7 +27,6 @@ internal sealed class BoundedDirectoryWalker(
 
     internal ScanResult Scan(
         string target,
-        bool isDriveScan,
         ScanTreeBudget budget,
         CancellationToken token,
         Action<string, long>? onProgress)
@@ -43,14 +42,16 @@ internal sealed class BoundedDirectoryWalker(
             var root = WalkDirectory(
                 target, target, 0, budget.MaxRetainedNodes,
                 buffer, context, parallelizeChildren);
+            var inaccessible = context.SnapshotInaccessible();
+            var inaccessibleCount = context.InaccessibleCount;
             return new ScanResult
             {
                 Root = root,
                 Total = context.Total,
-                Inaccessible = context.Inaccessible,
-                InaccessibleCount = context.InaccessibleCount,
+                Inaccessible = inaccessible,
+                InaccessibleCount = inaccessibleCount,
                 InaccessiblePathsTruncated =
-                    context.InaccessiblePathsTruncated
+                    inaccessibleCount > inaccessible.Length
             };
         }
         finally
@@ -92,11 +93,10 @@ internal sealed class BoundedDirectoryWalker(
             : WalkChildrenSequentially(
                 cursor, path, depth, buffer, partition, collector, context);
 
-        var selected = collector.BuildChildren();
         item.HasUnretainedChildren = collector.HasHiddenChildren;
-        if (allowance <= 1 && item.HasUnretainedChildren)
-            selected.Clear();
-        item.AttachChildren(selected);
+        // An allowance of one leaves no room even for an aggregate child, so the
+        // directory retains nothing; HasUnretainedChildren still keeps it scopable.
+        item.AttachChildren(allowance <= 1 ? [] : collector.BuildChildren());
         item.Size = total;
         return item;
     }
@@ -111,10 +111,14 @@ internal sealed class BoundedDirectoryWalker(
         WalkContext context)
     {
         long total = 0;
+        // One sink for the whole directory, reset per batch: recursing batch by batch
+        // keeps only one batch of subdirectory names alive, which is what bounds memory
+        // on directories with millions of entries.
+        var sink = new BatchSink(collector);
         while (true)
         {
             context.Token.ThrowIfCancellationRequested();
-            var sink = new BatchSink(collector);
+            sink.Reset();
             var status = cursor.ReadNext(buffer, sink);
             total = checked(total + sink.FileSize);
             context.AddToTotal(sink.FileSize);
@@ -160,10 +164,11 @@ internal sealed class BoundedDirectoryWalker(
     {
         long fileTotal = 0;
         var directoryNames = new List<string>();
+        var sink = new BatchSink(collector);
         while (true)
         {
             context.Token.ThrowIfCancellationRequested();
-            var sink = new BatchSink(collector);
+            sink.Reset();
             var status = cursor.ReadNext(buffer, sink);
             fileTotal = checked(fileTotal + sink.FileSize);
             context.AddToTotal(sink.FileSize);
@@ -319,11 +324,22 @@ internal sealed class BoundedDirectoryWalker(
 
     private readonly record struct DirectoryWorkItem(string Name);
 
+    /// <summary>
+    /// Collects one native batch: files go straight into the collector, subdirectory names
+    /// are handed back to the walker. <see cref="Reset"/> before each batch so
+    /// <see cref="FileSize"/> stays a per-batch delta.
+    /// </summary>
     private sealed class BatchSink(
         BoundedChildCollector collector) : IDirectoryEntrySink
     {
         public List<string> Directories { get; } = [];
         public long FileSize { get; private set; }
+
+        public void Reset()
+        {
+            Directories.Clear();
+            FileSize = 0;
+        }
 
         public void OnEntry(
             ReadOnlySpan<char> name,
@@ -356,13 +372,16 @@ internal sealed class BoundedDirectoryWalker(
         public ScanTreeBudget Budget { get; } = budget;
         public CancellationToken Token { get; } = token;
         public long Total => Interlocked.Read(ref _total);
-        public IReadOnlyList<string> Inaccessible => _inaccessible;
         public long InaccessibleCount => Interlocked.Read(ref _inaccessibleCount);
-        public bool InaccessiblePathsTruncated =>
-            InaccessibleCount > _inaccessible.Count;
 
         public void AddToTotal(long size) =>
             Interlocked.Add(ref _total, size);
+
+        public string[] SnapshotInaccessible()
+        {
+            lock (_inaccessibleLock)
+                return _inaccessible.ToArray();
+        }
 
         public void AddInaccessible(string path)
         {

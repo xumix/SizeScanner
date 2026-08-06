@@ -42,8 +42,7 @@ public sealed class BoundedScanMemoryTests
             maxInaccessiblePaths: 32);
 
         var result = new BoundedDirectoryWalker(source).Scan(
-            @"C:\denied", false, budget,
-            CancellationToken.None, null);
+            @"C:\denied", budget, CancellationToken.None, null);
 
         Assert.Equal(1_000_000, result.InaccessibleCount);
         Assert.Equal(32, result.Inaccessible.Count);
@@ -93,7 +92,6 @@ public sealed class BoundedScanMemoryTests
         var source = SyntheticSources.WideDirectory(
             @"C:\memory-test", fileCount, size: 1);
         return new BoundedDirectoryWalker(source).Scan(
-            @"C:\memory-test", false, budget,
-            CancellationToken.None, null);
+            @"C:\memory-test", budget, CancellationToken.None, null);
     }
 }
