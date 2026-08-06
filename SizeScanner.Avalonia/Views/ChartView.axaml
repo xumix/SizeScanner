@@ -24,6 +24,7 @@
                                         VerticalAlignment="Stretch"
                                         Chart="{Binding Layout}"
                                         Focusable="True"
+                                        IsEnabled="{Binding !IsChartScanning}"
                                         ToolTip.ShowDelay="100">
                 <views:SunburstChartControl.ContextMenu>
                     <ContextMenu>
@@ -41,7 +42,8 @@
                 </ToolTip.Tip>
             </views:SunburstChartControl>
 
-            <Grid Background="Transparent"
+            <Grid x:Name="PART_ScanOverlay"
+                  Background="Transparent"
                   IsVisible="{Binding IsChartScanning}">
                 <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
                         Opacity="0.72" />
@@ -52,7 +54,8 @@
                                           IsActive="{Binding IsChartScanning}"
                                           TrackBrush="{DynamicResource SystemControlForegroundChromeDisabledLowBrush}"
                                           IndicatorBrush="{DynamicResource SystemControlForegroundBaseHighBrush}"
-                                          AutomationProperties.Name="Scanning" />
+                                          AutomationProperties.Name="Scanning"
+                                          AutomationProperties.LiveSetting="Polite" />
             </Grid>
         </Grid>
     </Grid>

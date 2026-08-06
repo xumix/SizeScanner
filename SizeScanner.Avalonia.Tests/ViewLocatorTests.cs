@@ -30,7 +30,7 @@ public sealed class ViewLocatorTests
     [Fact]
     public void Build_returns_ChartView_for_ChartViewModel()
     {
-        var view = _locator.Build(CreateChartViewModel());
+        var view = AvaloniaUiThread.Invoke(() => _locator.Build(CreateChartViewModel()));
 
         Assert.IsType<ChartView>(view);
     }
@@ -39,23 +39,70 @@ public sealed class ViewLocatorTests
         new(new FakeScanService(), new NoopFs(), new NoopDialogs());
 
     [Fact]
-    public void Build_returns_TextBlock_for_unregistered_view_model()
-    {
-        var view = _locator.Build(new UnregisteredViewModel());
+    public void Build_returns_TextBlock_for_unregistered_view_model() =>
+        AvaloniaUiThread.Invoke(() =>
+        {
+            var view = _locator.Build(new UnregisteredViewModel());
 
-        var textBlock = Assert.IsType<TextBlock>(view);
-        Assert.Contains(nameof(UnregisteredViewModel), textBlock.Text);
-    }
+            var textBlock = Assert.IsType<TextBlock>(view);
+            Assert.Contains(nameof(UnregisteredViewModel), textBlock.Text);
+        });
 
     [Fact]
     public void ChartView_contains_app_owned_busy_spinner()
     {
-        var view = new ChartView();
-
-        var spinner = view.FindControl<BusySpinnerControl>("PART_ScanSpinner");
+        var spinner = AvaloniaUiThread.Invoke(() =>
+            new ChartView().FindControl<BusySpinnerControl>("PART_ScanSpinner"));
 
         Assert.NotNull(spinner);
     }
+
+    [Fact]
+    public void ChartView_scan_overlay_is_configured_to_block_pointer_input() =>
+        AvaloniaUiThread.Invoke(() =>
+        {
+            var view = new ChartView();
+
+            var overlay = view.FindControl<Grid>("PART_ScanOverlay");
+
+            Assert.NotNull(overlay);
+            // Avalonia panels only participate in hit-testing when Background is
+            // non-null; a null background lets pointer input fall through to the
+            // chart underneath even while the overlay is visible.
+            Assert.NotNull(overlay!.Background);
+            Assert.True(overlay.IsHitTestVisible);
+        });
+
+    [Fact]
+    public void ChartView_overlay_and_spinner_track_IsChartScanning() =>
+        AvaloniaUiThread.Invoke(() =>
+        {
+            var vm = CreateChartViewModel();
+            var view = new ChartView { DataContext = vm };
+            var overlay = view.FindControl<Grid>("PART_ScanOverlay")!;
+            var spinner = view.FindControl<BusySpinnerControl>("PART_ScanSpinner")!;
+            var chart = view.FindControl<SunburstChartControl>("PART_Chart")!;
+
+            Assert.False(overlay.IsVisible);
+            Assert.False(spinner.IsActive);
+            Assert.True(chart.IsEnabled);
+
+            vm.IsRootScanInProgress = true;
+
+            Assert.True(overlay.IsVisible);
+            Assert.True(spinner.IsActive);
+            // The chart is disabled (not just visually covered) while scanning so that
+            // keyboard focus and its ContextMenu commands (Delete, Open in Explorer)
+            // cannot race a concurrent scan; Avalonia routes neither pointer nor
+            // keyboard/context input to disabled elements.
+            Assert.False(chart.IsEnabled);
+
+            vm.IsRootScanInProgress = false;
+
+            Assert.False(overlay.IsVisible);
+            Assert.False(spinner.IsActive);
+            Assert.True(chart.IsEnabled);
+        });
 
     private sealed class UnregisteredViewModel : ViewModelBase;
 
