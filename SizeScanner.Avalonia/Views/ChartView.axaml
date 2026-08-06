@@ -18,27 +18,42 @@
             </StackPanel>
         </Border>
 
-        <views:SunburstChartControl x:Name="PART_Chart"
-                                    Grid.Row="1"
-                                    HorizontalAlignment="Stretch"
-                                    VerticalAlignment="Stretch"
-                                    Chart="{Binding Layout}"
-                                    Focusable="True"
-                                    ToolTip.ShowDelay="100">
-            <views:SunburstChartControl.ContextMenu>
-                <ContextMenu>
-                    <MenuItem Header="Open in Explorer" Command="{Binding OpenInExplorerCommand}" />
-                    <MenuItem Header="Delete" Command="{Binding DeleteCommand}" />
-                    <MenuItem Header="Delete permanently" Command="{Binding DeletePermanentlyCommand}" />
-                </ContextMenu>
-            </views:SunburstChartControl.ContextMenu>
-            <ToolTip.Tip>
-                <ToolTip MaxWidth="{x:Static sys:Double.PositiveInfinity}" Padding="6">
-                    <TextBlock Text="{Binding HoverToolTip}"
-                               FontFamily="Consolas,Courier New,monospace"
-                               TextWrapping="NoWrap" />
-                </ToolTip>
-            </ToolTip.Tip>
-        </views:SunburstChartControl>
+        <Grid Grid.Row="1">
+            <views:SunburstChartControl x:Name="PART_Chart"
+                                        HorizontalAlignment="Stretch"
+                                        VerticalAlignment="Stretch"
+                                        Chart="{Binding Layout}"
+                                        Focusable="True"
+                                        ToolTip.ShowDelay="100">
+                <views:SunburstChartControl.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open in Explorer" Command="{Binding OpenInExplorerCommand}" />
+                        <MenuItem Header="Delete" Command="{Binding DeleteCommand}" />
+                        <MenuItem Header="Delete permanently" Command="{Binding DeletePermanentlyCommand}" />
+                    </ContextMenu>
+                </views:SunburstChartControl.ContextMenu>
+                <ToolTip.Tip>
+                    <ToolTip MaxWidth="{x:Static sys:Double.PositiveInfinity}" Padding="6">
+                        <TextBlock Text="{Binding HoverToolTip}"
+                                   FontFamily="Consolas,Courier New,monospace"
+                                   TextWrapping="NoWrap" />
+                    </ToolTip>
+                </ToolTip.Tip>
+            </views:SunburstChartControl>
+
+            <Grid Background="Transparent"
+                  IsVisible="{Binding IsChartScanning}">
+                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
+                        Opacity="0.72" />
+                <views:BusySpinnerControl x:Name="PART_ScanSpinner"
+                                          Width="52" Height="52"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          IsActive="{Binding IsChartScanning}"
+                                          TrackBrush="{DynamicResource SystemControlForegroundChromeDisabledLowBrush}"
+                                          IndicatorBrush="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                                          AutomationProperties.Name="Scanning" />
+            </Grid>
+        </Grid>
     </Grid>
 </UserControl>

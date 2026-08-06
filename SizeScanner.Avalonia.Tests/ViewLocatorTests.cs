@@ -47,6 +47,16 @@ public sealed class ViewLocatorTests
         Assert.Contains(nameof(UnregisteredViewModel), textBlock.Text);
     }
 
+    [Fact]
+    public void ChartView_contains_app_owned_busy_spinner()
+    {
+        var view = new ChartView();
+
+        var spinner = view.FindControl<BusySpinnerControl>("PART_ScanSpinner");
+
+        Assert.NotNull(spinner);
+    }
+
     private sealed class UnregisteredViewModel : ViewModelBase;
 
     private sealed class NoopFs : IFileSystemActions
