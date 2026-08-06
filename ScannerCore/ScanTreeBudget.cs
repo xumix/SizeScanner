@@ -23,7 +23,7 @@ public sealed record ScanTreeBudget
         int maxRetainedDepth = 6,
         int maxInaccessiblePaths = 10_000,
         int maxDegreeOfParallelism = 0,
-        int parallelFanOutLevels = 1)
+        int parallelFanOutLevels = 2)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxRetainedNodes, 2);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxChildrenPerDirectory, 1);

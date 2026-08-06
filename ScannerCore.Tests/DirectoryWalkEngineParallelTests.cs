@@ -105,7 +105,7 @@ public sealed class DirectoryWalkEngineParallelTests
             for (var f = 0; f < 10; f++)
                 temp.CreateFile($"dir{d}/file{f}.dat", d * 10 + f + 1);
 
-        var budget = new ScanTreeBudget(maxDegreeOfParallelism: 3);
+        var budget = new ScanTreeBudget(maxDegreeOfParallelism: 3, parallelFanOutLevels: 1);
 
         var maxConcurrentOpens = 0;
         var currentOpens = 0;
