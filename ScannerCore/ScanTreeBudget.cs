@@ -9,24 +9,50 @@ public sealed record ScanTreeBudget
 {
     public static ScanTreeBudget Default { get; } = new();
 
+    /// <summary>Initializes scan retention and traversal concurrency limits.</summary>
+    /// <param name="maxRetainedNodes">
+    /// Maximum number of nodes retained in the bounded snapshot, including its root.
+    /// </param>
+    /// <param name="maxChildrenPerDirectory">
+    /// Maximum number of individual children retained for each directory.
+    /// </param>
+    /// <param name="maxRetainedDepth">
+    /// Maximum retained snapshot depth, counting the root as the first level.
+    /// </param>
+    /// <param name="maxInaccessiblePaths">
+    /// Maximum number of inaccessible path samples retained in the scan result.
+    /// </param>
+    /// <param name="maxDegreeOfParallelism">
+    /// Shared slots for concurrent native reads and sequential subtree walks.
+    /// Zero resolves to <c>Math.Min(Environment.ProcessorCount, 16)</c>.
+    /// </param>
+    /// <param name="parallelFanOutLevels">
+    /// Number of tree levels that fan their children out: 0 sequential,
+    /// 1 root only, 2 root plus its immediate children.
+    /// </param>
     public ScanTreeBudget(
         int maxRetainedNodes = 100_000,
         int maxChildrenPerDirectory = 99,
         int maxRetainedDepth = 6,
         int maxInaccessiblePaths = 10_000,
-        int maxDegreeOfParallelism = 4)
+        int maxDegreeOfParallelism = 0,
+        int parallelFanOutLevels = 1)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxRetainedNodes, 2);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxChildrenPerDirectory, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxRetainedDepth, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(maxInaccessiblePaths);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxDegreeOfParallelism, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxDegreeOfParallelism);
+        ArgumentOutOfRangeException.ThrowIfNegative(parallelFanOutLevels);
 
         MaxRetainedNodes = maxRetainedNodes;
         MaxChildrenPerDirectory = maxChildrenPerDirectory;
         MaxRetainedDepth = maxRetainedDepth;
         MaxInaccessiblePaths = maxInaccessiblePaths;
-        MaxDegreeOfParallelism = maxDegreeOfParallelism;
+        MaxDegreeOfParallelism = maxDegreeOfParallelism == 0
+            ? Math.Min(Environment.ProcessorCount, 16)
+            : maxDegreeOfParallelism;
+        ParallelFanOutLevels = parallelFanOutLevels;
     }
 
     public int MaxRetainedNodes { get; }
@@ -34,4 +60,5 @@ public sealed record ScanTreeBudget
     public int MaxRetainedDepth { get; }
     public int MaxInaccessiblePaths { get; }
     public int MaxDegreeOfParallelism { get; }
+    public int ParallelFanOutLevels { get; }
 }

@@ -9,8 +9,9 @@ namespace ScannerCore;
 /// <summary>
 /// Non-admin scan engine: enumerates directories via <see cref="DirectoryScanner"/>
 /// (NtQueryDirectoryFile) and delegates the actual walk to the bounded, budget-aware
-/// <see cref="BoundedDirectoryWalker"/>. Always available. Top-level subtrees walk in
-/// parallel on SSD-class volumes only; spinning disks stay sequential.
+/// <see cref="BoundedDirectoryWalker"/>. Always available. On SSD-class volumes the walk
+/// fans out for the first <see cref="ScanTreeBudget.ParallelFanOutLevels"/> levels under a
+/// shared slot budget; spinning disks stay fully sequential.
 /// </summary>
 public sealed class DirectoryWalkEngine : IScanEngine
 {

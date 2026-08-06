@@ -44,14 +44,14 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             var sequentialFirst = round % 2 == 0;
             if (sequentialFirst)
             {
-                sequentialTimes.Add(MeasureScan(sequentialEngine, out var sequentialTotal));
-                parallelTimes.Add(MeasureScan(parallelEngine, out var parallelTotal));
+                sequentialTimes.Add(MeasureScan(sequentialEngine, ScanTreeBudget.Default, out var sequentialTotal));
+                parallelTimes.Add(MeasureScan(parallelEngine, ScanTreeBudget.Default, out var parallelTotal));
                 output.WriteLine($"Round {round + 1}: sequential total={sequentialTotal:N0}, parallel total={parallelTotal:N0}");
             }
             else
             {
-                parallelTimes.Add(MeasureScan(parallelEngine, out var parallelTotal));
-                sequentialTimes.Add(MeasureScan(sequentialEngine, out var sequentialTotal));
+                parallelTimes.Add(MeasureScan(parallelEngine, ScanTreeBudget.Default, out var parallelTotal));
+                sequentialTimes.Add(MeasureScan(sequentialEngine, ScanTreeBudget.Default, out var sequentialTotal));
                 output.WriteLine($"Round {round + 1}: parallel total={parallelTotal:N0}, sequential total={sequentialTotal:N0}");
             }
         }
@@ -68,14 +68,87 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             $"Parallel walk ({parallelMedian.TotalSeconds:F1}s) should be faster than sequential ({sequentialMedian.TotalSeconds:F1}s) on {MeasurementRoot}.");
     }
 
-    private static TimeSpan MeasureScan(DirectoryWalkEngine engine, out long total)
+    /// <summary>
+    /// Collects two samples per config across two global rounds — one pass A→E, one pass
+    /// E→A — so every config gets one early-round and one late-round sample instead of the
+    /// whole grouped order always measuring the last config against the warmest filesystem
+    /// cache. Grouping by config (run both of its samples back-to-back, then move on) was the
+    /// order-confound that motivated this shape; per-config means below are therefore
+    /// comparable across configs, not just across rounds. Uses the arithmetic <see cref="Mean"/>
+    /// rather than <see cref="Median"/>: with exactly two samples, this codebase's
+    /// <c>sorted[Length / 2]</c> median always returns the larger (slower) sample, which under
+    /// monotonic cache warming systematically favors whichever position ran cold — the same
+    /// early/late bias the balanced round order was introduced to remove. A symmetric statistic
+    /// is required for the balanced order to actually be unbiased.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Performance")]
+    public void Fan_out_configuration_matrix_report()
+    {
+        Assert.SkipUnless(RunPerfTests,
+            "Set SIZESCANNER_RUN_PERF_TESTS=1 to run the C: fan-out configuration matrix.");
+        Assert.SkipUnless(Directory.Exists(MeasurementRoot), $"{MeasurementRoot} is not available.");
+        Assert.SkipUnless(VolumeParallelismPolicy.ShouldParallelize(MeasurementRoot),
+            $"{MeasurementRoot} is not SSD-class.");
+
+        var processors = Math.Min(Environment.ProcessorCount, 16);
+        (string Name, int Levels, int Degree)[] configs =
+        [
+            ("A sequential",      0, 1),
+            ("B root-only dop4",  1, 4),
+            ("C root-only dopN",  1, processors),
+            ("D two-level dopN",  2, processors),
+            ("E three-level dopN",3, processors)
+        ];
+
+        var samples = new List<TimeSpan>[configs.Length];
+        var totals = new long[configs.Length];
+        for (var i = 0; i < configs.Length; i++)
+            samples[i] = new List<TimeSpan>(capacity: 2);
+
+        for (var round = 0; round < 2; round++)
+        {
+            var forward = round % 2 == 0;
+            output.WriteLine($"Round {round + 1} order: {(forward ? "A->E" : "E->A")}");
+
+            for (var step = 0; step < configs.Length; step++)
+            {
+                var index = forward ? step : configs.Length - 1 - step;
+                var config = configs[index];
+                var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
+                var budget = new ScanTreeBudget(
+                    maxDegreeOfParallelism: config.Degree,
+                    parallelFanOutLevels: config.Levels);
+
+                var elapsed = MeasureScan(engine, budget, out var total);
+                samples[index].Add(elapsed);
+                totals[index] = total;
+
+                output.WriteLine(
+                    $"  {config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
+                    $"elapsed={elapsed.TotalSeconds:F2}s total={total:N0}");
+            }
+        }
+
+        for (var i = 0; i < configs.Length; i++)
+        {
+            output.WriteLine(
+                $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
+                $"mean={Mean(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
+        }
+    }
+
+    private static TimeSpan MeasureScan(
+        DirectoryWalkEngine engine, ScanTreeBudget budget, out long total)
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = engine.Scan(MeasurementRoot, isDriveScan: true, CancellationToken.None, onProgress: null, ScanTreeBudget.Default);
+        var result = engine.Scan(
+            MeasurementRoot, isDriveScan: true, CancellationToken.None,
+            onProgress: null, budget);
         stopwatch.Stop();
 
         total = result.Total;
@@ -89,5 +162,19 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             sorted[i] = samples[i];
         Array.Sort(sorted);
         return sorted[sorted.Length / 2];
+    }
+
+    /// <summary>
+    /// Arithmetic mean, used instead of <see cref="Median"/> for the balanced fan-out matrix.
+    /// With exactly two samples, <see cref="Median"/>'s <c>sorted[Length / 2]</c> always returns
+    /// the larger (slower) sample rather than a true middle value; the mean is symmetric between
+    /// the two round positions and does not reintroduce an early/late (cold/warm cache) bias.
+    /// </summary>
+    private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+    {
+        var total = TimeSpan.Zero;
+        foreach (var sample in samples)
+            total += sample;
+        return total / samples.Count;
     }
 }

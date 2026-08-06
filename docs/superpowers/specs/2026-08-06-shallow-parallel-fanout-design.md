@@ -38,10 +38,12 @@ Full work-stealing (workers pushing every newly discovered subdirectory onto a s
 
 **Depth-limited fan-out under one shared slot budget, async through the fan-out levels only.**
 
-- A directory fans its children out iff `depth < ParallelFanOutLevels`. Default `2` — the root and its immediate children.
+- A directory fans its children out iff `depth < ParallelFanOutLevels`. **Shipped default `1` — root only** (locked by measurement and human ruling; see [Measured results](#measured-results)). `2` and `3` remain available as explicit, tested knobs — not defaults.
 - Everything at or below that depth walks its whole subtree synchronously on a single slot, exactly as today.
 - One `SemaphoreSlim(MaxDegreeOfParallelism)` for the entire scan. A slot is held only around a native read or around a sequential subtree walk, **never across a wait for children**.
 - Children are scheduled in a bounded window as batches are read, so subdirectory names are never fully materialized.
+
+Example at an explicit `ParallelFanOutLevels = 2` (illustrates the general depth-limited mechanism; **not** the shipped default):
 
 ```text
 ParallelFanOutLevels = 2
@@ -54,7 +56,7 @@ C:\                     depth 0  < 2  → fan out children
     Alice\              depth 2 !< 2  → whole subtree on one slot
 ```
 
-`ParallelFanOutLevels = 1` reproduces today's root-only behavior; `0` is fully sequential. The volume policy simply forces `0`.
+`ParallelFanOutLevels = 1` — root only — **is the shipped default**; it reproduces today's (pre-branch) root-only behavior. `0` is fully sequential, and is what the volume policy forces on non-SSD-class volumes.
 
 ---
 
@@ -78,7 +80,7 @@ Three methods replace the `parallelizeChildren` boolean:
 | `WalkSequentialUnderSlot` | sync | Today's `WalkDirectory`/`WalkChildrenSequentially`, unchanged semantics |
 | `WalkFanOutAsync` | async | Batch-reads under a slot, schedules children in a bounded window, folds results |
 
-Async state machines therefore exist only at the top `ParallelFanOutLevels` levels (default two). The deep hot path stays synchronous and allocation-free.
+Async state machines therefore exist only at the top `ParallelFanOutLevels` levels (default one — root only; shipped value after measurement, see [Measured results](#measured-results)). The deep hot path stays synchronous and allocation-free.
 
 ### Slot discipline (this is the deadlock proof)
 
@@ -108,8 +110,19 @@ Rent from `ArrayPool<byte>.Shared` **after** acquiring a slot and return **befor
 
 ### Handles
 
-A fan-out parent keeps its cursor open across awaits, so open cursors are bounded by
-`1 + (levels − 1) × window + degree` — roughly 50 handles at DOP 16, levels 2. This is stated rather than asserted; the concurrency assertion targets `ReadNext`.
+A fan-out parent keeps its cursor open across child awaits, and every parent has its own
+window `W = 2 × DOP`. The worst-case fan-out-parent cursor bound is therefore geometric,
+`Σ(i = 0 .. levels − 1) W^i`, not linear. Add up to `DOP` active sequential subtrees
+(each of which can hold its normal recursive cursor chain); queued sequential-child tasks
+do not open cursors until they acquire a slot. Fan-out task growth is likewise geometric:
+up to `Σ(i = 1 .. levels) W^i` in-flight child tasks across all per-parent windows.
+
+At DOP 16 (`W = 32`), level 1 has one fan-out-parent cursor plus at most 16 active
+sequential subtrees. Explicit level 2 can reach `1 + 32 = 33` fan-out-parent cursors plus
+those subtrees (roughly the earlier 50-handle characterization), while level 3 can reach
+`1 + 32 + 1,024 = 1,057` fan-out-parent cursors before adding sequential recursion.
+This geometric cursor/task growth is why levels 2 and 3 remain non-default and risky at
+high DOP even though concurrent `ReadNext` calls and pooled buffers stay DOP-bounded.
 
 ### Collector ownership
 
@@ -136,10 +149,10 @@ Retention is unaffected by scheduling: `BoundedChildCollector` ranks by size the
 
 | Property | Default | Meaning |
 |----------|---------|---------|
-| `MaxDegreeOfParallelism` | `Math.Min(Environment.ProcessorCount, 16)` (confirm by measurement) | Shared slots for concurrent native reads and sequential subtrees |
-| `ParallelFanOutLevels` | `2` | Number of levels that fan out: `0` sequential, `1` root only (today), `2` root + one level |
+| `MaxDegreeOfParallelism` | `0`, which resolves automatically to `Math.Min(Environment.ProcessorCount, 16)` (confirmed correct by measurement, see [Measured results](#measured-results)) | Shared slots for concurrent native reads and sequential subtrees |
+| `ParallelFanOutLevels` | `1` — root only (shipped default, locked by measurement and human ruling) | Number of levels that fan out: `0` sequential, `1` root only (today's behavior, **shipped default**), `2`/`3` deeper fan-out — available explicitly, not defaults |
 
-Validation: `maxDegreeOfParallelism >= 1`, `parallelFanOutLevels >= 0`. No negative sentinel.
+Validation: `maxDegreeOfParallelism >= 0` (zero selects the automatic `Math.Min(Environment.ProcessorCount, 16)` degree; any positive value is used as-is) and `parallelFanOutLevels >= 0`. Negative values for either parameter are rejected with `ArgumentOutOfRangeException`; there is no negative sentinel for any other meaning.
 
 Because the DOP default now depends on the machine, **every concurrency test must pass an explicit budget**; a two-core CI agent would otherwise make parallel assertions vacuous.
 
@@ -174,10 +187,10 @@ No new engine parameters; `IScanEngine.Scan` and `ScanResult` are unchanged.
 1. **Long-pole rendezvous (the point of the change).** Tree: root → one child → two grandchildren, `ParallelFanOutLevels = 2`, `MaxDegreeOfParallelism = 2`. Both grandchild reads gate on observing concurrency 2. Passes under two-level fan-out; times out under root-only, which is exactly the regression being fixed. Deterministic — no wall-clock comparison.
 2. **Negative control.** Same tree at `ParallelFanOutLevels = 1` never reaches concurrency 2 (short timeout).
 3. **Full equivalence.** Recursive comparison of the entire retained tree (names, sizes, `IsDir`, `HasUnretainedChildren`, `Items == null`) plus `Total`, `InaccessibleCount`, across sequential vs levels 1 vs levels 2, and across two different DOP values.
-4. **Concurrency cap.** Peak concurrent `ReadNext` ≤ DOP under two-level fan-out on a deep, wide synthetic tree.
+4. **Concurrency cap.** Peak concurrent `ReadNext` ≤ DOP under explicit two- and three-level fan-out on a deep, wide synthetic tree.
 5. **No deadlock under scarcity.** Nested fan-out with `MaxDegreeOfParallelism = 1` and `ParallelFanOutLevels = 2` completes (single slot forces every parent to release before children can run).
-6. **Failure propagation.** A cursor that returns `DirectoryBatchResult.Failed` deep in one subtree surfaces `IOException` from `Scan` (not `OperationCanceledException`, not `AggregateException`) and does not hang.
-7. **Cancellation.** Cancelled token throws `OperationCanceledException` under two-level fan-out.
+6. **Failure propagation.** A cursor that returns `DirectoryBatchResult.Failed` deep in one subtree surfaces `IOException` from `Scan` (not `OperationCanceledException`, not `AggregateException`) and does not hang at explicit fan-out levels 2 or 3. Concurrent independent failures surface the first internally captured failure after every sibling is observed.
+7. **Cancellation.** Cancelled token throws `OperationCanceledException` under explicit fan-out levels 2 and 3.
 8. **Policy off.** `new DirectoryWalkEngine(_ => false)` stays sequential and correct.
 9. **Budget validation.** `parallelFanOutLevels: -1` rejected; `0` disables fan-out; `1` is root-only.
 10. **Memory.** Existing `BoundedScanMemoryTests` still pass, plus a wide-directory fan-out case asserting retained nodes stay within budget.
@@ -233,9 +246,257 @@ No Avalonia, chart, `DirectoryScanner`, or `FsItem` changes.
 | Question | Decision |
 |----------|----------|
 | Success bar | Option B — close most of the gap, not full parity |
-| Knob shape | `ParallelFanOutLevels` count, default `2`; no negative sentinel |
+| Knob shape | `ParallelFanOutLevels` count, **shipped default `1`** (locked by measurement and human ruling — see [Measured results](#measured-results)); `2`/`3` remain available as explicit knobs, not defaults; no negative sentinel |
 | Concurrency model | Async through fan-out levels; single blocking boundary in `Scan` |
 | Deadlock avoidance | Slot never held across a child wait |
 | Nested pools | Forbidden — one `SemaphoreSlim` per scan |
 | Work-stealing | Out of scope |
 | DOP default | `Math.Min(ProcessorCount, 16)`, confirmed by the measurement matrix |
+
+---
+
+## Measured results
+
+**Date:** 2026-08-06
+**Machine:** CPU `AMD Ryzen 7 5800X 8-Core Processor` (8 cores / 16 logical processors, via `Get-CimInstance Win32_Processor`); OS Windows 11 Pro 10.0.26200.
+**C: physical drive:** `WD_BLACK SN850X 2000GB`, NVMe, SSD media type — identity confirmed by resolving the drive letter to its physical disk (`Get-Partition -DriveLetter C | Get-Disk`), not just enumerating all disks, since this machine has two SSDs and `C:` had to be matched to the correct one.
+**Volume policy:** `VolumeParallelismPolicy.ShouldParallelize("C:\")` returns `true` (no seek penalty reported), so the perf-test SSD guard passed and the matrix ran for real rather than skipping.
+
+### Command
+
+```powershell
+$env:SIZESCANNER_RUN_PERF_TESTS = "1"
+dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --filter "FullyQualifiedName~Fan_out_configuration_matrix_report" --logger "console;verbosity=detailed"
+```
+
+### Raw output (5 configs × 2 rounds each, 10 full `C:\` scans)
+
+```
+ A sequential         levels=0 dop=1  median=38,62s total=395 086 822 488
+ B root-only dop4     levels=1 dop=4  median=12,97s total=395 088 669 840
+ C root-only dopN     levels=1 dop=16 median=12,28s total=395 089 255 632
+ D two-level dopN     levels=2 dop=16 median=12,51s total=395 087 113 480
+ E three-level dopN   levels=3 dop=16 median=8,60s total=395 089 259 240
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 2,6637 Minutes
+```
+
+### Totals check — investigated, not a walker bug
+
+The five totals are **not byte-identical** (they span roughly 395,086,822,488 – 395,089,259,240, a spread of ~2.44 MB out of ~368 GiB, i.e. ~6×10⁻⁶ relative). Per the decision rule this is treated as a potential correctness signal and was investigated before drawing any tuning conclusion, rather than assumed benign.
+
+Investigation: a throwaway, uncommitted test ran the **same** config (`levels=0, dop=1`, sequential) four times back-to-back against the same live `C:\` volume:
+
+```
+run 0: total=395 064 355 568 elapsed=20,79s
+run 1: total=395 064 601 328 elapsed=20,34s
+run 2: total=395 064 961 776 elapsed=27,21s
+run 3: total=395 064 953 584 elapsed=24,48s
+```
+
+Even with the config held fixed, the total drifts by ~606 KB over ~93 seconds of wall-clock time, and drifts in the same direction (mostly increasing) as the 5-config matrix. `C:\` is this machine's live, in-use system+user volume (browser cache/history, temp files, Windows/app logs, prefetch); it is not a static fixture, so small monotonic growth between temporally separated scans is expected background churn, not a fan-out/DOP concurrency defect. This is consistent with — and does not contradict — the deterministic, byte-for-byte equivalence already proven on static synthetic trees across sequential/levels-1/levels-2 and multiple DOP values (`DirectoryWalkEngineParallelTests`, full-tree equivalence test). The throwaway investigation test was not committed; only the brief's exact matrix code and results are recorded here.
+
+**Conclusion:** the five totals differ by an amount and pattern fully explained by live-volume drift during a ~2.7-minute measurement window, not by the fan-out change. Not BLOCKED — proceeding to the tuning decision.
+
+### Decision-rule reasoning
+
+| Comparison | Values | Verdict |
+|---|---|---|
+| D vs B | 12.51s vs 12.97s | D marginally faster (~3.5%) |
+| D vs C | 12.51s vs 12.28s | D marginally *slower* (~1.9%) — within the noise band demonstrated above (control runs of similar duration varied by several %) |
+| E vs D | 8.60s vs 12.51s | E materially faster (~31%) |
+
+- **D materially faster than B and C, E within noise of D?** No — D does not beat C at all (it's marginally slower), so this branch does not apply.
+- **D ≈ C?** Yes — the ~0.23s gap between D and C is within the run-to-run noise measured on this same live volume (the control experiment showed ~3% drift in elapsed time and total bytes across identical-config runs). Two-level fan-out buys nothing measurable over just raising `MaxDegreeOfParallelism` at the existing root-only fan-out.
+- **E materially faster than D?** Yes, clearly (~31%), but this does not override the D≈C finding — it only means three-level fan-out finds more usable parallelism than two-level does on this tree shape (`C:\Windows\*` and similar subtrees are still large enough at depth 2 to benefit from being split further).
+
+Applying the rule conservatively: since **D ≈ C**, the decision is to **revert the shipped default to `parallelFanOutLevels: 1`** (root-only, i.e. today's pre-branch fan-out shape) while **keeping `maxDegreeOfParallelism` at its auto default** (`Math.Min(ProcessorCount, 16)`, i.e. `0` resolved). The measurable win on this machine is the DOP bump from 4 to 16 (B → C, ~5.3% faster), not the extra fan-out level. `parallelFanOutLevels: 2` (and `3`) remain available, tested, and correct knobs — just not the shipped default — and the two-level path stays exercised by the deterministic rendezvous/equivalence/cap/deadlock tests in `DirectoryWalkEngineParallelTests`.
+
+**Follow-up note (from the E result):** three-level fan-out (E) was ~31% faster than two-level (D) on this machine's `C:\`, well outside noise. That is evidence that shallow fan-out is leaving real parallelism on the table deeper in the tree (e.g. inside `Windows\` or large user profile subtrees), and is a concrete data point in favor of the deferred full work-stealing design mentioned in Non-goals/Risks, rather than simply raising `ParallelFanOutLevels` again by fixed increments.
+
+### Resulting change (initial, superseded by the confirmation run below)
+
+`ScannerCore/ScanTreeBudget.cs`: default `parallelFanOutLevels` changed from `2` to `1`. `maxDegreeOfParallelism` default (`0` → auto `Math.Min(ProcessorCount, 16)`) is unchanged — it was already confirmed correct by this measurement (C, D, E all use it and all beat A and B).
+
+**Caveat identified after the fact:** the grouped `A→B→C→D→E` order above always measures each config's two samples back-to-back before moving on, so the last config (E) is always measured against the warmest filesystem cache and the first config (A) always against the coldest. That is a real order confound, not just a hypothetical one — see the balanced confirmation run below, where the same config (A) measured cold vs. warm differs by ~27%, dwarfing the ~3–4% run-to-run noise seen on the parallel configs. The decision below was re-derived from a balanced re-run rather than relying on the grouped numbers alone.
+
+### Balanced confirmation run
+
+**Why:** the grouped order's cache-warmth confound (above) could not be ruled out as the reason `D` and `C` came out close and `E` came out ahead — an artifact of run position rather than a real property of three-level fan-out. `Fan_out_configuration_matrix_report` was revised to collect its two samples per config across **two global rounds** instead of two back-to-back samples per config: round 1 walks the configs `A→B→C→D→E`, round 2 walks them in reverse, `E→D→C→B→A`. Every config now gets exactly one early-round and one late-round sample (except the middle config, `C`, which is position 3 of 5 in both directions and so is consistently mid-run in both rounds — an accepted limitation of a simple two-round reversal, not a hidden bias toward any other single config). Same 5 exact configs, same 2 samples each, same `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` reset inside `MeasureScan`, same SSD/perf gates, no new dependency. **(Fix Round 1 update: the per-config summary statistic below was originally `Median`; see the correction immediately after the raw output — it is now the arithmetic `Mean` of the two samples.)**
+
+Code (`ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`):
+
+```csharp
+    [Fact]
+    [Trait("Category", "Performance")]
+    public void Fan_out_configuration_matrix_report()
+    {
+        Assert.SkipUnless(RunPerfTests,
+            "Set SIZESCANNER_RUN_PERF_TESTS=1 to run the C: fan-out configuration matrix.");
+        Assert.SkipUnless(Directory.Exists(MeasurementRoot), $"{MeasurementRoot} is not available.");
+        Assert.SkipUnless(VolumeParallelismPolicy.ShouldParallelize(MeasurementRoot),
+            $"{MeasurementRoot} is not SSD-class.");
+
+        var processors = Math.Min(Environment.ProcessorCount, 16);
+        (string Name, int Levels, int Degree)[] configs =
+        [
+            ("A sequential",      0, 1),
+            ("B root-only dop4",  1, 4),
+            ("C root-only dopN",  1, processors),
+            ("D two-level dopN",  2, processors),
+            ("E three-level dopN",3, processors)
+        ];
+
+        var samples = new List<TimeSpan>[configs.Length];
+        var totals = new long[configs.Length];
+        for (var i = 0; i < configs.Length; i++)
+            samples[i] = new List<TimeSpan>(capacity: 2);
+
+        for (var round = 0; round < 2; round++)
+        {
+            var forward = round % 2 == 0;
+            output.WriteLine($"Round {round + 1} order: {(forward ? "A->E" : "E->A")}");
+
+            for (var step = 0; step < configs.Length; step++)
+            {
+                var index = forward ? step : configs.Length - 1 - step;
+                var config = configs[index];
+                var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
+                var budget = new ScanTreeBudget(
+                    maxDegreeOfParallelism: config.Degree,
+                    parallelFanOutLevels: config.Levels);
+
+                var elapsed = MeasureScan(engine, budget, out var total);
+                samples[index].Add(elapsed);
+                totals[index] = total;
+
+                output.WriteLine(
+                    $"  {config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
+                    $"elapsed={elapsed.TotalSeconds:F2}s total={total:N0}");
+            }
+        }
+
+        for (var i = 0; i < configs.Length; i++)
+        {
+            output.WriteLine(
+                $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
+                $"mean={Mean(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
+        }
+    }
+```
+
+`MeasureScan` is unchanged from the initial run. **Fix Round 1:** the final summary line above originally read `median={Median(...)}` (see [Fix Round 1 correction](#fix-round-1-mean-replaces-a-biased-median-of-two) below for why); it is now `mean={Mean(...)}`, backed by a new helper:
+
+```csharp
+private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+{
+    var total = TimeSpan.Zero;
+    foreach (var sample in samples)
+        total += sample;
+    return total / samples.Count;
+}
+```
+
+`Median` itself is untouched and remains the statistic used by the separate `Parallel_walk_is_faster_than_sequential_on_c_drive` test (also 2 samples, but that test only asserts a `<` comparison between two independently-computed medians, not a labeled "the middle value" claim, so it does not carry the same misleading-label risk).
+
+#### Command
+
+```powershell
+$env:SIZESCANNER_RUN_PERF_TESTS = "1"
+dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --filter "FullyQualifiedName~Fan_out_configuration_matrix_report" --logger "console;verbosity=detailed"
+```
+
+#### Raw output (2 global rounds × 5 configs, 10 full `C:\` scans)
+
+```
+Round 1 order: A->E
+  A sequential         levels=0 dop=1  elapsed=38,08s total=395 078 032 392
+  B root-only dop4     levels=1 dop=4  elapsed=13,94s total=395 078 376 320
+  C root-only dopN     levels=1 dop=16 elapsed=12,77s total=395 078 593 840
+  D two-level dopN     levels=2 dop=16 elapsed=13,04s total=395 079 978 344
+  E three-level dopN   levels=3 dop=16 elapsed=9,24s total=395 080 564 104
+Round 2 order: E->A
+  E three-level dopN   levels=3 dop=16 elapsed=9,49s total=395 080 510 888
+  D two-level dopN     levels=2 dop=16 elapsed=13,18s total=395 081 473 480
+  C root-only dopN     levels=1 dop=16 elapsed=12,28s total=395 082 550 752
+  B root-only dop4     levels=1 dop=4  elapsed=13,82s total=395 083 075 104
+  A sequential         levels=0 dop=1  elapsed=27,98s total=395 083 169 312
+A sequential         levels=0 dop=1  median=38,08s total=395 083 169 312
+B root-only dop4     levels=1 dop=4  median=13,94s total=395 083 075 104
+C root-only dopN     levels=1 dop=16 median=12,77s total=395 082 550 752
+D two-level dopN     levels=2 dop=16 median=13,18s total=395 081 473 480
+E three-level dopN   levels=3 dop=16 median=9,49s total=395 080 510 888
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 2,7519 Minutes
+```
+
+The five `median=...` summary lines above are the **unedited console transcript** from the run as originally executed with the pre-fix harness; they are kept verbatim as the historical raw record. They are **not** the controlling statistic — see the correction immediately below.
+
+#### Fix Round 1: mean replaces a biased median-of-two
+
+**Problem found in review:** the reversed A↔E round order removes the *position* bias, but the summary statistic did not. This codebase's `Median(samples)` is `sorted[samples.Count / 2]`; for exactly 2 samples that is `sorted[1]`, i.e. the **larger (slower)** of the two, not a true middle value. Under monotonic cache warming (each successive scan on a live, busy `C:\` tends to run in a slightly warmer/slower system state as background churn accumulates — see the totals discussion above), "always keep the larger of the two" is not a neutral choice: combined with the balanced round order, it does not average out early/late position the way an actual median or mean would. This does not invalidate the round-balancing fix (that fix targeted *which* position each config sampled at, not how the two samples are combined), but it does mean the reported "confirmed medians" above were never a properly symmetric statistic. Fixed by adding a dedicated arithmetic-mean helper and using it only for this test's per-config summary; `Median` itself is untouched and still backs the unrelated `Parallel_walk_is_faster_than_sequential_on_c_drive` test's `<` comparison of two independently-computed medians:
+
+```csharp
+private static TimeSpan Mean(IReadOnlyList<TimeSpan> samples)
+{
+    var total = TimeSpan.Zero;
+    foreach (var sample in samples)
+        total += sample;
+    return total / samples.Count;
+}
+```
+
+The summary output line changed from `median={Median(samples[i])...}` to `mean={Mean(samples[i])...}`. **No real-volume rerun was performed or required** — the fix recomputes from the exact two raw per-execution `elapsed=...` samples already captured above, using simple arithmetic averaging:
+
+| Config | Round 1 | Round 2 | Mean | (previous, biased) median |
+|---|---|---|---|---|
+| A sequential | 38.08s | 27.98s | **33.03s** | 38.08s |
+| B root-only dop4 | 13.94s | 13.82s | **13.88s** | 13.94s |
+| C root-only dopN | 12.77s | 12.28s | **12.525s** (≈12.53s) | 12.77s |
+| D two-level dopN | 13.04s | 13.18s | **13.11s** | 13.18s |
+| E three-level dopN | 9.24s | 9.49s | **9.365s** (≈9.37s) | 9.49s |
+
+The means are the correct controlling statistic from here on; the "previous, biased median" column is shown only to make the correction auditable, not as an alternative reading.
+
+#### Cache-order effect, directly demonstrated
+
+Config **A** (fully sequential, single slot) was measured cold in round 1 (first, elapsed 38.08s) and warm in round 2 (last, elapsed 27.98s) — a **26.5% swing from position alone**, far larger than any other config's round-to-round spread (B 0.9%, C 3.8%, D 1.1%, E 2.6%). This confirms the human's concern directly: the original grouped order would have systematically flattered whichever config ran last (there, E) and penalized whichever ran first (there, A), rather than measuring only the fan-out/DOP effect. Parallel configs are far less sensitive to this (they're already close to saturating available I/O/CPU, so caching state matters much less), but A's swing alone is enough to invalidate treating the grouped run as free of order bias.
+
+#### Totals: discrepancy re-investigated with this run's own data, not by assumption
+
+The 10 totals from this run span 395,078,032,392 – 395,083,169,312 (~5.1 MB spread, ~1.4×10⁻⁵ relative to ~368 GiB) — the same order of magnitude as the initial run's spread and consistent with (not contradicting) the live-volume-churn explanation already established there. This run's own layout gives an additional, independent confirmation beyond that prior throwaway experiment: listing all 10 totals in the order they were actually measured shows they climb **almost monotonically with wall-clock position, independent of which config produced them** — e.g. round 1's total rises from A (measured 1st) through E (measured 5th), and every round-2 total is greater than or equal to its round-1 counterpart for the *same* config (E's is the sole, negligible exception, −53,216 bytes, ≈1.9×10⁻⁷ relative — consistent with a single background file being briefly smaller, e.g. a rewritten log or cache file, not a scan defect). A total that tracked *configuration* rather than *wall-clock position* would not show this shape. Conclusion unchanged: not BLOCKED, this is live-volume churn.
+
+#### Decision rule re-applied to the confirmed (balanced) means
+
+| Comparison | Values | Verdict |
+|---|---|---|
+| D vs B | 13.11s vs 13.88s | D faster (~5.5%) |
+| D vs C | 13.11s vs 12.525s | D **slower** (~4.7%) — a modest gap, but slightly wider than `C`'s own 3.8% round-to-round spread, so not cleanly attributable to a single noise-band estimate; regardless, D still does not beat C, which is the fact that matters for branch 1 below, so this doesn't change what fires |
+| E vs D | 9.365s vs 13.11s | E materially faster (~28.6%) — far outside any parallel config's round-to-round noise (max ~3.8%) |
+
+This reproduces the same shape as the initial grouped run, now with both the cache-order confound and the biased median-of-two statistic eliminated: branch 1 ("D materially faster than B and C") still does not apply — D never beats C — so **branch 2 ("D ≈ C") still governs** in the sense that matters for the default (no promotion of level 2), even though the corrected D-vs-C gap (~4.7%) is a little wider than the single 3.8% noise estimate this section previously (and incorrectly) called it "inside." **Branch 3 ("E materially faster than D") still fires simultaneously** (~28.6%, essentially unchanged from the pre-fix ~28.0%). Correcting the statistic changed the exact D-vs-C margin and withdrew the overstated "inside measured noise" framing, but it did not resolve the branch conflict or flip either branch's qualitative verdict. Per this task's instruction, that means **do not choose a branch again; return `NEEDS_CONTEXT`** with the numbers instead of re-deriving a pick as Task 6 did.
+
+**Decision status (as measured): NEEDS_CONTEXT.** The balanced evidence did not resolve the branch conflict on its own — it calls for a human decision between two valid readings of the plan's rule:
+
+- Treat "D ≈ C" as authoritative (as Task 6 did) → keep the default at `parallelFanOutLevels: 1`.
+- Treat "E materially faster than D" as the dominant signal → the default should arguably not be `1` at all, but this branch's own text ("leave the default at 2 and add a note that work-stealing is worth a follow-up") does not fit either, since `2` (`D`) does not measurably beat `1` (`C`)'s DOP-only path. Taking `E`'s result at face value most directly argues for evaluating a `3`-level default or, more likely, prioritizing the deferred work-stealing design — not a call this measurement alone should make.
+
+### Final decision — human ruling
+
+The two-way tie above was escalated and resolved by explicit human ruling rather than re-derived from the numbers a third time:
+
+> Ship `parallelFanOutLevels: 1` with automatic DOP. Keep deeper fan-out available explicitly; do not promote `2` or `3`. The balanced evidence is that level 2 is slightly slower than level 1 on this machine, while level 3's result is recorded as a follow-up signal rather than a default change.
+
+**Controlling measurement:** the **balanced confirmation run** (`### Balanced confirmation run` above), read via its corrected **arithmetic-mean** summary (`#### Fix Round 1: mean replaces a biased median-of-two`) — mean A=33.03s, B=13.88s, C=12.525s, D=13.11s, E=9.365s, with both the cache-order confound and the earlier biased median-of-two statistic eliminated. The **initial grouped run** (`### Command` / `### Raw output` at the top of this section, and its `### Decision-rule reasoning`) is retained here as **historical, first-pass evidence only**, computed by the pre-fix harness's median-of-two: it drove Task 6's original (methodologically confounded) pick of `1`, and its numbers happened to point the same direction as the corrected balanced run, but it is superseded, not authoritative, for two independent reasons — the grouped `A→B→C→D→E` order structurally favored whichever config ran last (there, `E`) with the warmest filesystem cache, and its summary statistic was the same max-of-two `Median` later found to be biased.
+
+**Why `1`, not `2`:** on the controlling (balanced, mean) measurement, `D` (level 2, 13.11s) is slightly *slower* than `C` (level 1 at auto DOP, 12.525s) — a ~4.7% gap, a little wider than `C`'s own 3.8% round-to-round spread, so not cleanly attributable to a single noise-band estimate alone. What matters for the decision rule is unaffected by that nuance: `D` does not beat `C` under either statistic, so two-level fan-out does not earn its complexity over root-only fan-out plus the auto-DOP bump; `parallelFanOutLevels: 2` is not promoted.
+
+**Why not `3` either, despite `E`'s edge:** `E` (level 3, mean 9.365s) was reproducibly ~28–29% faster than `D` on the grouped run, the pre-fix balanced median, and the corrected balanced mean alike — well outside measurement noise, and not explained by the cache-order confound (which affected `A` far more than any parallel config) or by the median-vs-mean correction (both statistics agree here). That result is real, but it is recorded as a **future work-stealing / deeper-fan-out research signal**, not adopted as a default: it was measured on one machine and one volume (`C:\` on this machine's NVMe drive) with no evidence of how it generalizes, the plan's own decision rule treats a dramatically-better top config as a trigger for a separate work-stealing design rather than for chasing the fixed-increment knob further, and shipping an unvalidated `3` would be a materially bigger change than this task's scope. The two-level and three-level paths remain fully implemented, tested (rendezvous/equivalence/cap/deadlock/failure/cancellation in `DirectoryWalkEngineParallelTests`), and reachable via explicit `ScanTreeBudget` construction — only the zero-arg/default-arg convenience value is fixed at `1`.
+
+**Resulting code (final):** `ScannerCore/ScanTreeBudget.cs` default `parallelFanOutLevels` is `1`; `maxDegreeOfParallelism` default is auto (`0` → `Math.Min(Environment.ProcessorCount, 16)`). This matches current `HEAD` as committed after Task 6 and its balanced-confirmation follow-up — the human ruling makes that value **final**, not provisional, closing out the `NEEDS_CONTEXT` above. No further code change was required.

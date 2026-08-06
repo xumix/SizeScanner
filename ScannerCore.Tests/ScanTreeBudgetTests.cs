@@ -15,4 +15,33 @@ public sealed class ScanTreeBudgetTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new ScanTreeBudget(maxRetainedNodes: 1));
     }
+
+    [Fact]
+    public void Budget_rejects_negative_fan_out_levels()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ScanTreeBudget(parallelFanOutLevels: -1));
+    }
+
+    [Fact]
+    public void Budget_defaults_to_one_fan_out_level()
+    {
+        Assert.Equal(1, new ScanTreeBudget().ParallelFanOutLevels);
+    }
+
+    [Fact]
+    public void Zero_degree_resolves_to_bounded_processor_count()
+    {
+        var budget = new ScanTreeBudget(maxDegreeOfParallelism: 0);
+
+        Assert.Equal(
+            Math.Min(Environment.ProcessorCount, 16),
+            budget.MaxDegreeOfParallelism);
+    }
+
+    [Fact]
+    public void Explicit_degree_is_preserved()
+    {
+        Assert.Equal(3, new ScanTreeBudget(maxDegreeOfParallelism: 3).MaxDegreeOfParallelism);
+    }
 }

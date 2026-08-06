@@ -28,10 +28,10 @@ Dependency flow is acyclic: UI/Console/Tests → `ScannerCore`; `ScannerCore` ne
 - **Platform**: Windows 10+ x64, targeting `net10.0-windows` and `win-x64`; requires `kernel32.dll` and `ntdll.dll`. The solution advertises additional CPU configurations, but only x64 is validated and published.
 - **Size mode**: drive scans use allocation size, directory scans use logical file size; `isDriveScan` flows from `DriveScanner` into `DirectoryScanner`'s `preferAllocatedSize` (allocation size vs `EndOfFile`).
 - **Progress**: `IProgress<ScanProgress>` callbacks from `DriveScanner` (throttled to 300 ms). UI wires `Progress<ScanProgress>` to the status bar and progress bar.
-- **Cancellation**: Both `ScanDrive` and `ScanDirectory` accept `CancellationToken`.
+- **Cancellation/failure**: Both `ScanDrive` and `ScanDirectory` accept `CancellationToken`. Caller cancellation takes precedence; otherwise fan-out records and rethrows the first internal non-cancellation failure only after observing all in-flight siblings, so no partial result escapes.
 - **Unified progress/busy presentation**: A root scan (`MainWindowViewModel`) and a chart-initiated scoped scan (`ChartViewModel`, drill-down/"Go up"/stale-root rescan) both drive the same toolbar progress bar and Cancel button; `MainWindowViewModel.DisplayProgressValue`/`DisplayProgressIsIndeterminate`/`IsBusy` pick whichever scan is active. A directory scan without a known total (`ScanProgress.PercentComplete == null`) is indeterminate; it becomes determinate once a percentage is reported. `ChartView` always overlays a dimming, pointer- and keyboard-blocking `BusySpinnerControl` over the chart during any root or scoped scan (`ChartViewModel.IsChartScanning`), disabling `SunburstChartControl` via `IsEnabled` rather than only covering it.
-- **Bounds**: `ScanTreeBudget.Default` retains at most 100,000 nodes, 99 children per retained directory, six retained levels, 10,000 inaccessible path samples, and four top-level workers.
-- **Parallelism**: only immediate children of the scan root fan out, and only when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe). HDDs, UNC paths, non-fixed drives, and unknown volumes stay sequential.
+- **Bounds**: `ScanTreeBudget.Default` retains at most 100,000 nodes, 99 children per retained directory, six retained levels, and 10,000 inaccessible path samples.
+- **Parallelism**: directories fan their children out across a scan-wide slot budget for the first `ScanTreeBudget.ParallelFanOutLevels` levels — default `1` (root only); deeper subtrees walk their whole tree sequentially on one shared slot. `2` and `3` remain explicit, measured knobs, not defaults. `MaxDegreeOfParallelism` (default `0`, resolving to `Math.Min(Environment.ProcessorCount, 16)`) caps concurrent native reads and outstanding 1 MiB buffer rentals, not open-cursor count — a parent cursor can stay open across an awaited child. Fan-out only happens when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe); HDDs and unknown volumes stay sequential.
 - **Reparse points**: skip them unless `FILE_ATTRIBUTE_OFFLINE` is set. Preserve this behavior unless the change explicitly adds safer tag/identity/cycle validation.
 - **Denied directories**: `FsItem.Items == null` means open failed; an empty list means the directory opened but retained no children. Inaccessible paths are sampled and may be truncated.
 
@@ -94,10 +94,10 @@ Opt-in performance tests require `SIZESCANNER_RUN_PERF_TESTS=1`. Never run destr
 
 - `ScannerCore/DirectoryScanner.cs` — symlink/offline handling, native enumeration
 - `ScannerCore/DirectoryEntryCursor.cs` — native cursor/source/sink test seam
-- `ScannerCore/BoundedDirectoryWalker.cs` — exact-total traversal and bounded root fan-out
+- `ScannerCore/BoundedDirectoryWalker.cs` — exact-total traversal and bounded depth-limited fan-out
 - `ScannerCore/BoundedChildCollector.cs` — largest-child retention and aggregate creation
-- `ScannerCore/ScanTreeBudget.cs` — retention, inaccessible-path, and worker limits
-- `ScannerCore/DirectoryWalkEngine.cs` — scan sizing and SSD-only top-level parallelism
+- `ScannerCore/ScanTreeBudget.cs` — retention, inaccessible-path, fan-out-depth, and shared parallelism limits
+- `ScannerCore/DirectoryWalkEngine.cs` — scan sizing and SSD-gated depth-limited fan-out
 - `ScannerCore/VolumeParallelismPolicy.cs` — P/Invoke seek-penalty detection gating parallelism
 - `ScannerCore/DriveScanner.cs` — scan orchestration, progress, inaccessible tracking
 - `ScannerCore/DriveScanMetadata.cs` — synthetic drive scan entry names/accessors/insertion

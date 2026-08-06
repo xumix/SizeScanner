@@ -122,7 +122,7 @@
 
 **Storage Device Policy:**
 - `ScannerCore/VolumeParallelismPolicy.cs` opens local fixed-volume device paths through `kernel32.dll!CreateFile`.
-- The same service calls `kernel32.dll!DeviceIoControl` with `IOCTL_STORAGE_QUERY_PROPERTY` to detect seek penalty and enable top-level parallel scanning only for SSD-class storage.
+- The same service calls `kernel32.dll!DeviceIoControl` with `IOCTL_STORAGE_QUERY_PROPERTY` to detect seek penalty and enable depth-limited parallel fan-out (root level by default via `ScanTreeBudget.ParallelFanOutLevels`, deeper only through an explicit non-default budget) only for SSD-class storage.
 - UNC paths, non-fixed drives, inaccessible devices, and failed property queries conservatively remain sequential.
 
 **Drive and Filesystem Shell:**

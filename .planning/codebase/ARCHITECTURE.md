@@ -65,7 +65,7 @@ part of the production UI.
 | Busy spinner control | App-owned, dependency-free circular spinner rendered via `DrawingContext`/`StreamGeometry`, driven by a `DispatcherTimer` gated on visual-tree attachment and `IsActive` | `SizeScanner.Avalonia/Views/BusySpinnerControl.cs` |
 | Scan facade | Normalizes drive/directory scans, progress, inaccessible metadata, and synthetic drive entries | `ScannerCore/DriveScanner.cs` |
 | Engine strategy | Defines scan-engine equivalence and ordered fallback selection | `ScannerCore/IScanEngine.cs`, `ScannerCore/ScanEngineSelector.cs` |
-| Directory engine | Chooses allocation/logical sizing and SSD-gated top-level fan-out | `ScannerCore/DirectoryWalkEngine.cs` |
+| Directory engine | Chooses allocation/logical sizing and SSD-gated depth-limited fan-out | `ScannerCore/DirectoryWalkEngine.cs` |
 | Native enumeration | Streams Windows directory records through a cursor/sink protocol | `ScannerCore/DirectoryScanner.cs`, `ScannerCore/DirectoryEntryCursor.cs` |
 | Bounded tree walk | Computes exact totals while retaining a depth/width/node-bounded snapshot | `ScannerCore/BoundedDirectoryWalker.cs`, `ScannerCore/BoundedChildCollector.cs` |
 | Scan domain model | Represents files, directories, aggregates, parent links, denied directories, and hidden descendants | `ScannerCore/FsItem.cs` |
@@ -89,7 +89,7 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
   interaction, and tests.
 - Build a bounded retained snapshot, not a complete in-memory filesystem tree:
   `ScannerCore/ScanTreeBudget.cs` limits retained nodes, children, depth,
-  inaccessible paths, and top-level worker count.
+  inaccessible paths, fan-out depth, and shared parallelism degree.
 - Re-scan a selected directory for drill-down detail rather than retaining
   unbounded navigation history; `ChartViewModel` owns at most the root tree and
   current scope tree.
@@ -220,8 +220,8 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
    (`ScannerCore/ScanEngineSelector.cs:29`).
 6. `DirectoryWalkEngine` creates a `DirectoryScanner` using allocation size for
    drive scans or logical size for directory scans, asks
-   `VolumeParallelismPolicy` whether top-level fan-out is safe, and delegates to
-   `BoundedDirectoryWalker` (`ScannerCore/DirectoryWalkEngine.cs:26`).
+   `VolumeParallelismPolicy` whether depth-limited fan-out is safe, and delegates to
+   `BoundedDirectoryWalker` (`ScannerCore/DirectoryWalkEngine.cs:27`).
 7. `DirectoryScanner` opens a Windows directory handle and streams
    `FILE_DIRECTORY_INFORMATION` batches from `NtQueryDirectoryFile` into an
    `IDirectoryEntrySink` (`ScannerCore/DirectoryScanner.cs:81`,
@@ -323,7 +323,7 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
 
 **`ScanTreeBudget`:**
 - Purpose: Make memory, retained depth/width, inaccessible-path sampling, and
-  top-level parallelism explicit inputs.
+  fan-out depth and shared parallelism degree explicit inputs.
 - Examples: `ScannerCore/ScanTreeBudget.cs`,
   `ScannerCore/BoundedDirectoryWalker.cs`
 - Pattern: Immutable policy value with validated constructor defaults.
@@ -403,9 +403,17 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
   `ScannerCore/` and `SizeScanner.Avalonia/Services/`.
 - **Threading:** Avalonia starts on an STA UI thread. `ScanService` moves scans
   to `Task.Run`; progress uses `Progress<ScanProgress>` to return updates to the
-  captured UI context. Only root-level subdirectories fan out, only when
-  `VolumeParallelismPolicy` reports no seek penalty, and worker/channel sizes
-  come from `ScanTreeBudget`.
+  captured UI context. `BoundedDirectoryWalker` fans directories out with
+  `Task.Run` under a scan-wide semaphore slot budget for the first
+  `ScanTreeBudget.ParallelFanOutLevels` levels (default `1`, root only; `2`/`3`
+  remain explicit, tested knobs), and only when `VolumeParallelismPolicy`
+  reports no seek penalty. Deeper subtrees and non-SSD volumes walk fully
+  sequentially on one shared slot; there are no channels or a fixed worker
+  pool. `ScanTreeBudget.MaxDegreeOfParallelism` bounds concurrent native reads
+  and outstanding buffer rentals, not open-cursor count, since a parent
+  cursor can stay open across an awaited child. Per-parent windows make
+  waiting fan-out-parent cursor/task growth geometric across explicit deeper
+  levels, which is why levels `2`/`3` remain non-default at high degree.
 - **Scan serialization:** Root and scope workflows must not race a shared,
   stateful root `DriveScanner`. `MainWindowViewModel.IsBusy`,
   `ChartViewModel.IsScopeScanning`, and `IsRootScanInProgress` enforce this.
@@ -515,6 +523,11 @@ at the application boundary.
   `ScanEngineSelector` can try a fallback engine
   (`ScannerCore/BoundedDirectoryWalker.cs`,
   `ScannerCore/ScanEngineSelector.cs`).
+- Fan-out records the first internal non-cancellation failure, aborts and
+  observes in-flight siblings, then rethrows that first failure even if a
+  secondary exception reaches the synchronous scan boundary first. Caller
+  cancellation takes precedence, and neither path publishes a partial tree
+  (`ScannerCore/BoundedDirectoryWalker.cs`).
 - Root and scoped scan exceptions are displayed through `IDialogService` and
   swallowed at their UI workflow boundary after setting failure status; `finally`
   restores transient busy/progress state, and the current chart remains unchanged

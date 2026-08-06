@@ -67,7 +67,7 @@
 - Translate expected boundary failures into domain results where the caller needs a recoverable outcome. `WindowsFileSystemActions.DeleteAsync` returns `DeleteResult` in `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`; native cursor opening returns `null` for inaccessible directories in `ScannerCore/DirectoryScanner.cs`.
 - Catch broad exceptions only at deliberate resilience boundaries: elevation detection in `ScannerCore/DriveScanner.cs`, settings loading in `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`, engine fallback in `ScannerCore/ScanEngineSelector.cs`, and user-facing chart scans in `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs`.
 - Preserve cleanup with `using`, `using var`, and `finally`. Examples include pooled-buffer return in `ScannerCore.Tests/DirectoryScannerParsingTests.cs` and scan-state restoration in `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs`.
-- Do not silently swallow unexpected errors in core algorithms. `ScannerCore/BoundedDirectoryWalker.cs` records worker failures and rethrows them after cleanup; `ScannerCore/ScanEngineSelector.cs` only suppresses a failure when another capable engine can be tried.
+- Do not silently swallow unexpected errors in core algorithms. `ScannerCore/BoundedDirectoryWalker.cs` records the first fan-out child failure, observes remaining siblings, and rethrows that first failure after cleanup; `ScannerCore/ScanEngineSelector.cs` only suppresses a failure when another capable engine can be tried.
 - Keep failure messages near the boundary that can act on them: debug diagnostics in core, `DeleteResult.Error` in filesystem services, and `IDialogService` dialogs in both root- and scoped-scan view-model workflows.
 
 ## Logging
@@ -106,7 +106,7 @@
 **Return Values:**
 - Return immutable records for snapshots/value results and explicit result types for recoverable failures.
 - Use nullable values only when absence is part of the contract: `IDirectoryEntrySource.Open` can return `null` in `ScannerCore/DirectoryEntryCursor.cs`, and `FsItem.Items == null` represents an inaccessible directory in `ScannerCore/FsItem.cs`.
-- Do not return partial scan trees after cancellation or worker failure; scanner tests enforce this in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` and `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs`.
+- Do not return partial scan trees after cancellation or fan-out child failure; scanner tests enforce this in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs` and `ScannerCore.Tests/BoundedDirectoryWalkerTests.cs`.
 
 ## Module Design
 

@@ -30,7 +30,7 @@
 ## Frameworks
 
 **Core:**
-- .NET Base Class Library 10 - Filesystem access, threading, channels, spans, JSON serialization, process launching, Windows identity, and safe native handles throughout `ScannerCore/` and `SizeScanner.Avalonia/`.
+- .NET Base Class Library 10 - Filesystem access, threading (`SemaphoreSlim` slot budgets, `Task.Run` fan-out), spans, JSON serialization, process launching, Windows identity, and safe native handles throughout `ScannerCore/` and `SizeScanner.Avalonia/`. `System.Threading.Channels` is not used; the bounded walker fans out with `Task.Run` under a shared semaphore instead.
 - Avalonia `12.1.1` - Classic desktop application lifetime, XAML UI, custom drawing, storage picker, Fluent theme, and Inter font in `SizeScanner.Avalonia/`.
 - CommunityToolkit.Mvvm `8.4.2` - Observable view-model state and generated relay commands in `SizeScanner.Avalonia/ViewModels/`.
 - Microsoft.Extensions.DependencyInjection `10.0.10` - Composition root and singleton service/view-model registration in `SizeScanner.Avalonia/App.axaml.cs`.
