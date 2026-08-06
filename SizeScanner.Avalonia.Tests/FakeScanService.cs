@@ -33,6 +33,12 @@ internal sealed class FakeScanService : IScanService
     /// <summary>When set, <see cref="RunScopeAsync"/> awaits this instead of completing immediately.</summary>
     public TaskCompletionSource<FsItem>? PendingScope { get; set; }
 
+    /// <summary>The progress reporter passed to the most recent <see cref="RunAsync"/> call.</summary>
+    public IProgress<ScanProgress>? RootProgress { get; private set; }
+
+    /// <summary>The progress reporter passed to the most recent <see cref="RunScopeAsync"/> call.</summary>
+    public IProgress<ScanProgress>? ScopeProgress { get; private set; }
+
     public Task<FsItem> RunAsync(
         string target,
         bool isDrive,
@@ -43,6 +49,7 @@ internal sealed class FakeScanService : IScanService
         LastTarget = target;
         IsDriveScan = isDrive;
         RootCalls.Add((target, isDrive));
+        RootProgress = progress;
 
         if (PendingRoot is not null)
             return PendingRoot.Task;
@@ -61,6 +68,7 @@ internal sealed class FakeScanService : IScanService
         bool preferAllocatedSize = false)
     {
         ScopeCalls.Add((target, preferAllocatedSize));
+        ScopeProgress = progress;
 
         if (PendingScope is not null)
             return PendingScope.Task;

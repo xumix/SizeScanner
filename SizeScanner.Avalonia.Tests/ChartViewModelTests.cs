@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using ScannerCore;
 using SizeScanner.Avalonia.Abstractions;
@@ -45,6 +46,19 @@ public sealed class ChartViewModelTests
     {
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
         public Task ShowInfoAsync(string title, string message) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Runs posted callbacks inline. Without an ambient <see cref="SynchronizationContext"/>,
+    /// <see cref="Progress{T}.Report"/> marshals through <see cref="ThreadPool.QueueUserWorkItem(WaitCallback)"/>,
+    /// which races an unrelated <c>await Task.Yield()</c> once the pool has multiple warm
+    /// threads (as happens once other tests have run). Capturing this context makes
+    /// <see cref="ChartViewModel"/>'s <see cref="Progress{T}"/> reporter deliver synchronously,
+    /// so assertions immediately after <c>Report(...)</c> are deterministic.
+    /// </summary>
+    private sealed class ImmediateSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) => d(state);
     }
 
     private static ChartViewModel CreateVm(FakeScanService? scan = null) =>
@@ -132,6 +146,62 @@ public sealed class ChartViewModelTests
     }
 
     [Fact]
+    public async Task Scope_scan_reports_progress_and_resets_transient_state_on_completion()
+    {
+        var previousContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new ImmediateSynchronizationContext());
+        try
+        {
+            var scan = new FakeScanService();
+            var vm = CreateVm(scan);
+            var root = SampleDriveRoot();
+            vm.SetScan(root, isDrive: true, targetPath: "C:\\");
+            vm.Refresh(0f, includeFreeSpace: false);
+            var pending = new TaskCompletionSource<FsItem>(TaskCreationOptions.RunContinuationsAsynchronously);
+            scan.PendingScope = pending;
+
+            var scopeTask = vm.TryScopeAtAsync(root.Items![2]);
+
+            Assert.True(vm.IsChartScanning);
+            Assert.True(vm.IsScopeProgressIndeterminate);
+            scan.ScopeProgress!.Report(new ScanProgress("C:\\Windows\\System32", 100, null, false));
+            await Task.Yield();
+            Assert.Equal("C:\\Windows\\System32", vm.ScopeStatusText);
+            Assert.True(vm.IsScopeProgressIndeterminate);
+
+            scan.ScopeProgress.Report(new ScanProgress("C:\\Windows\\System32", 200, 37.5f, false));
+            await Task.Yield();
+            Assert.Equal(37.5, vm.ScopeProgressValue);
+            Assert.False(vm.IsScopeProgressIndeterminate);
+
+            pending.SetResult(TestTree.Dir("Windows", TestTree.File("kernel.sys", 300)));
+            Assert.True(await scopeTask);
+            Assert.False(vm.IsChartScanning);
+            Assert.Equal(0, vm.ScopeProgressValue);
+            Assert.False(vm.IsScopeProgressIndeterminate);
+            Assert.Empty(vm.ScopeStatusText);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    [Fact]
+    public void IsChartScanning_includes_toolbar_root_scan_state()
+    {
+        var vm = CreateVm();
+
+        vm.IsRootScanInProgress = true;
+
+        Assert.True(vm.IsChartScanning);
+
+        vm.IsRootScanInProgress = false;
+
+        Assert.False(vm.IsChartScanning);
+    }
+
+    [Fact]
     public async Task Scope_scan_keeps_previous_chart_visible_until_it_completes()
     {
         var scan = new FakeScanService();
@@ -180,6 +250,10 @@ public sealed class ChartViewModelTests
         Assert.False(vm.IsScoped);
         Assert.False(vm.IsScopeScanning);
         Assert.Same(layoutBefore, vm.Layout);
+        Assert.False(vm.IsChartScanning);
+        Assert.Equal(0, vm.ScopeProgressValue);
+        Assert.False(vm.IsScopeProgressIndeterminate);
+        Assert.Empty(vm.ScopeStatusText);
     }
 
     [Fact]
