@@ -1,116 +1,141 @@
 # External Integrations
 
-**Analysis Date:** 2026-07-16
+**Analysis Date:** 2026-08-06
 
 ## APIs & External Services
 
-**Windows Native Filesystem APIs:**
-- `kernel32.dll!CreateFile` opens directory and volume handles in `ScannerCore/DirectoryScanner.cs` and `ScannerCore/VolumeParallelismPolicy.cs`.
-  - SDK/Client: .NET P/Invoke through `System.Runtime.InteropServices` and `Microsoft.Win32.SafeHandles`.
-  - Auth: Current Windows process token; inaccessible directories return `null` and are reported by `ScannerCore/DriveScanner.cs`.
-- `ntdll.dll!NtQueryDirectoryFile` performs buffered native directory enumeration in `ScannerCore/DirectoryScanner.cs`.
-  - SDK/Client: Direct P/Invoke with a pooled 1 MiB buffer and unsafe parsing in `ScannerCore/DirectoryScanner.cs`.
-  - Auth: Current Windows process token; no separate credentials.
-- `kernel32.dll!DeviceIoControl` queries `StorageDeviceSeekPenaltyProperty` to distinguish SSD-class storage from seek-penalty devices in `ScannerCore/VolumeParallelismPolicy.cs`.
-  - SDK/Client: Direct P/Invoke with marshalled `STORAGE_PROPERTY_QUERY`-style structures.
-  - Auth: Current Windows process token; failures conservatively select sequential scanning.
-
-**Windows Shell and Desktop Services:**
-- Windows Explorer selection is launched through `explorer.exe` in `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`.
-  - SDK/Client: `System.Diagnostics.Process`.
-  - Auth: Current interactive Windows user.
-- Recycle Bin deletion uses `Microsoft.VisualBasic.FileIO.FileSystem` in `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`; permanent deletion uses `System.IO`.
-  - SDK/Client: .NET runtime APIs.
-  - Auth: Current Windows process token and filesystem ACLs.
-- UAC elevation uses the Windows Shell `runas` verb in `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
-  - SDK/Client: `ProcessStartInfo` with `UseShellExecute=true`.
-  - Auth: Interactive UAC consent; cancellation error 1223 is handled without treating it as an application failure.
-- Windows identity and administrator-role checks use `WindowsIdentity`, `WindowsPrincipal`, and `WindowsBuiltInRole.Administrator` in `ScannerCore/DriveScanner.cs` and `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
-  - SDK/Client: `System.Security.Principal.Windows`.
-  - Auth: Current Windows access token.
-- The native Avalonia storage provider opens the OS folder picker in `SizeScanner.Avalonia/Services/AvaloniaFolderPicker.cs`.
-  - SDK/Client: `Avalonia.Platform.Storage`.
-  - Auth: Current interactive Windows user.
-
 **Runtime Network Services:**
-- No HTTP client, remote service SDK, telemetry exporter, update service, or runtime API client is present in `ScannerCore/`, `SizeScanner.Avalonia/`, or `ScannerConsole/`.
-- Links in `README.md` are documentation and image references only; no application code fetches them.
+- None detected. `ScannerCore/`, `SizeScanner.Avalonia/`, and `ScannerConsole/` contain no HTTP client, socket client, cloud SDK, database client, telemetry SDK, or remote API integration.
+- Scans and settings operate against the local Windows machine; the production application does not require an internet connection.
 
-**Build-Time Package Service:**
-- NuGet restores packages declared in `Directory.Packages.props` and project references in `**/*.csproj`.
-  - SDK/Client: `dotnet restore` in `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, and `.github/workflows/codeql.yml`.
-  - Auth: No repository-level private feed or `NuGet.Config` is present; any feed credentials must come from the developer or CI environment.
+**Package Distribution:**
+- NuGet - Build-time dependency restore for package references declared in `**/*.csproj` and versioned in `Directory.Packages.props`.
+  - SDK/Client: .NET CLI and MSBuild NuGet restore.
+  - Auth: None configured in the repository; no canonical `NuGet.config` or private-feed credential configuration is detected.
+
+**GitHub Platform:**
+- GitHub Actions - Build, test, coverage, CodeQL, release, and dependency automation under `.github/workflows/`.
+  - SDK/Client: GitHub-hosted actions and `gh` CLI in `.github/workflows/dependabot-auto-merge.yml`.
+  - Auth: Repository-provided `GITHUB_TOKEN` is used only by the Dependabot auto-merge workflow; the release workflow uses its job-level `contents: write` permission.
+- GitHub Releases - `v*` tags publish `SizeScanner-win-x64.zip` through `softprops/action-gh-release` in `.github/workflows/release.yml`.
+  - SDK/Client: `softprops/action-gh-release@v3`.
+  - Auth: GitHub Actions job token via `contents: write`.
+- GitHub CodeQL - Scheduled and change-triggered C# static analysis in `.github/workflows/codeql.yml`.
+  - SDK/Client: `github/codeql-action/init@v4` and `github/codeql-action/analyze@v4`.
+  - Auth: GitHub Actions permissions `actions: read`, `contents: read`, and `security-events: write`.
+- Dependabot - Weekly NuGet and GitHub Actions dependency updates configured in `.github/dependabot.yml`, with patch/minor auto-merge in `.github/workflows/dependabot-auto-merge.yml`.
+  - SDK/Client: `dependabot/fetch-metadata@v3` and GitHub CLI.
+  - Auth: Repository-provided `GITHUB_TOKEN`.
+
+**Documentation Assets:**
+- The screenshot in `README.md` is embedded from `raw.githubusercontent.com`; this is a documentation-only external asset and is not fetched by application code.
 
 ## Data Storage
 
 **Databases:**
-- Not detected; no database server, embedded database, ORM, or database client is referenced by `Directory.Packages.props` or production `*.csproj` files.
-  - Connection: Not applicable.
-  - Client: Not applicable.
+- Not detected. There is no relational, document, embedded, or cloud database dependency in `Directory.Packages.props` or application project files.
+- No connection strings, ORM contexts, migrations, or database configuration are present in canonical source.
 
 **File Storage:**
-- Local Windows filesystems only. `ScannerCore/DirectoryScanner.cs` reads directory metadata, while `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs` reveals or deletes user-selected paths.
-- User preferences are serialized to `%AppData%\SizeScanner\settings.avalonia.json` by `SizeScanner.Avalonia/Services/JsonSettingsStore.cs`.
-- Settings serialization uses the AOT-safe source-generated context in `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs`.
-- Scan results remain in memory as `ScannerCore/FsItem.cs` trees; no scan database or result file persistence is implemented in `ScannerCore/DriveScanner.cs`.
+- Local filesystem only.
+- User settings are serialized with source-generated System.Text.Json metadata to `%AppData%\SizeScanner\settings.avalonia.json` by `SizeScanner.Avalonia/Services/JsonSettingsStore.cs` and `SizeScanner.Avalonia/Services/SizeScannerJsonContext.cs`.
+- Scanned directory data remains in memory as `ScannerCore/FsItem.cs` trees; no scan-result persistence layer is present.
+- Filesystem discovery and mutations target paths selected from local/Windows-visible volumes through `ScannerCore/`, `SizeScanner.Avalonia/Services/DriveProvider.cs`, `SizeScanner.Avalonia/Services/AvaloniaFolderPicker.cs`, and `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`.
 
 **Caching:**
-- No external or persistent cache is present. `ScannerCore/DirectoryScanner.cs` temporarily rents enumeration buffers from `ArrayPool<byte>.Shared`.
+- No external or persistent cache.
+- Scan state, chart state, progress, and retained tree nodes are process-local in `ScannerCore/` and `SizeScanner.Avalonia/ViewModels/`.
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- No application account system, OAuth/OIDC provider, API-key authentication, or authorization server is present in the production projects listed by `SizeScanner.slnx`.
-  - Implementation: Windows identity is used only for privilege detection and filesystem access in `ScannerCore/DriveScanner.cs` and `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
-- The default manifest requests `asInvoker` in `SizeScanner.Avalonia/app.manifest`; users can explicitly relaunch elevated through `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
+- None. The application has no user accounts, sign-in flow, token validation, authorization middleware, or remote identity provider.
+
+**Windows Identity and Elevation:**
+- The process checks membership in the local Administrators group with `WindowsIdentity`, `WindowsPrincipal`, and `WindowsBuiltInRole` in `ScannerCore/DriveScanner.cs` and `SizeScanner.Avalonia/Services/WindowsElevationService.cs`.
+- Optional elevation relaunch uses Windows ShellExecute with the `runas` verb in `SizeScanner.Avalonia/Services/WindowsElevationService.cs`, allowing Windows UAC to present the consent prompt.
+- The normal application manifest runs as the invoking user (`asInvoker`) in `SizeScanner.Avalonia/app.manifest`; administrator access is not requested at startup.
+- Filesystem authorization is delegated to Windows access control. Inaccessible paths are recorded by scanner behavior rather than authenticated through an application-specific security layer.
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None; no Sentry, Application Insights, OpenTelemetry, or remote crash-reporting package appears in `Directory.Packages.props`.
+- None. No Sentry, Application Insights, OpenTelemetry, or other remote error/metrics SDK is referenced by canonical projects.
 
 **Logs:**
-- Avalonia startup calls `LogToTrace()` in `SizeScanner.Avalonia/Program.cs`, routing framework diagnostics to trace listeners rather than a remote sink.
-- Native enumeration failures emit `Debug.WriteLine` with the NTSTATUS code in `ScannerCore/DirectoryScanner.cs`.
-- The development harness writes progress, failures, and inaccessible paths to the terminal through Spectre.Console in `ScannerConsole/Program.cs`.
-- GitHub CI uploads TRX results and Cobertura coverage artifacts from `TestResults/` in `.github/workflows/dotnet-desktop.yml`.
+- Avalonia diagnostics are sent to trace listeners via `.LogToTrace()` in `SizeScanner.Avalonia/Program.cs`.
+- Native directory enumeration and scan-engine fallback diagnostics use `Debug.WriteLine` in `ScannerCore/DirectoryScanner.cs` and `ScannerCore/ScanEngineSelector.cs`.
+- The development harness writes rich console status and failures through Spectre.Console in `ScannerConsole/Program.cs`.
+- Runtime errors are generally surfaced in the UI or converted to result/fallback state; no log-file sink or centralized collector is configured.
+- CI exports TRX test results and Cobertura coverage as GitHub Actions artifacts in `.github/workflows/dotnet-desktop.yml`.
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- GitHub Releases hosts tagged release archives created by `.github/workflows/release.yml`.
-- The release artifact is `SizeScanner-win-x64.zip`, built as a self-contained Windows x64 publication from `SizeScanner.Avalonia/SizeScanner.Avalonia.csproj`.
-- No MSIX/WAP installer, store deployment, container image, cloud host, or code-signing integration is configured in `.github/workflows/release.yml`.
+- No hosted application service. SizeScanner is distributed as a Windows desktop executable.
+- GitHub Releases hosts the versioned `SizeScanner-win-x64.zip` produced by `.github/workflows/release.yml`.
+- The release is self-contained and unpackaged: no MSIX/WAP installer, Microsoft Store integration, container image, deployment server, or code-signing service is configured.
 
 **CI Pipeline:**
-- `.github/workflows/dotnet-desktop.yml` runs Debug and Release tests, collects XPlat coverage, restores `win-x64`, builds `SizeScanner.slnx`, and uploads Release artifacts on pushes and pull requests to `main` or `master`.
-- `.github/workflows/release.yml` triggers on `v*` tags, performs a self-contained `win-x64` publish, creates a zip, and invokes `softprops/action-gh-release@v2` with generated release notes.
-- `.github/workflows/codeql.yml` performs scheduled and branch/PR C# CodeQL analysis on `windows-latest`.
-- `.github/dependabot.yml` groups weekly NuGet and GitHub Actions updates; `.github/workflows/dependabot-auto-merge.yml` enables squash auto-merge for patch and minor Dependabot pull requests.
-- Git tag history is required by MinVer, so GitHub checkout uses `fetch-depth: 0` in `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, and `.github/workflows/codeql.yml`.
-- GitLab CI is not present in the checked-out repository. `AGENTS.md` references `.gitlab-ci.yml`, but that file is not available, so no active GitLab pipeline can be verified.
+- GitHub Actions is the detected canonical CI/CD platform.
+- `.github/workflows/dotnet-desktop.yml` runs Debug and Release tests/builds on `windows-latest`, collects coverage, and uploads test/build artifacts for pushes and pull requests to `main` or `master`.
+- `.github/workflows/codeql.yml` restores and manually builds the C# solution on `windows-latest`, then runs CodeQL on pushes, pull requests, and a weekly schedule.
+- `.github/workflows/release.yml` restores and publishes a self-contained `win-x64` Native AOT build on `v*` tags, compresses it, uploads the build artifact, and creates a GitHub Release.
+- `.github/workflows/dependabot-auto-merge.yml` runs on Dependabot pull requests and enables squash auto-merge for semantic-version patch and minor updates.
+- No GitLab CI configuration is detected in the canonical repository root.
+
+**Build Service Integrations:**
+- `actions/checkout@v7` checks out full Git history so MinVer can derive versions in `.github/workflows/dotnet-desktop.yml`, `.github/workflows/release.yml`, and `.github/workflows/codeql.yml`.
+- `actions/setup-dotnet@v6` installs the SDK selected by `global.json` and enables package caching.
+- `microsoft/setup-msbuild@v3` exposes the Windows MSBuild toolchain required by the desktop/AOT build.
+- `actions/upload-artifact@v7` stores test, coverage, build, and publish outputs.
+- `softprops/action-gh-release@v3` creates the tagged GitHub Release.
 
 ## Environment Configuration
 
 **Required env vars:**
-- Production application: none detected in `ScannerCore/`, `SizeScanner.Avalonia/`, or `ScannerConsole/`.
-- `SIZESCANNER_RUN_PERF_TESTS=1` optionally enables the opt-in speed test in `ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`.
-- GitHub workflows define non-secret build variables such as `DOTNET_CLI_TELEMETRY_OPTOUT`, `DOTNET_NOLOGO`, project paths, and configuration in `.github/workflows/*.yml`.
-- Dependabot auto-merge maps the pull-request URL and GitHub token to `PR_URL` and `GH_TOKEN` in `.github/workflows/dependabot-auto-merge.yml`.
+- Application runtime: none.
+- GitHub Actions defines `DOTNET_CLI_TELEMETRY_OPTOUT`, `DOTNET_NOLOGO`, solution/project paths, and build configuration inside workflow YAML; these are CI convenience values rather than production requirements.
+- Dependabot auto-merge maps the pull request URL and repository-provided GitHub token into the GitHub CLI environment in `.github/workflows/dependabot-auto-merge.yml`.
 
 **Secrets location:**
-- `GITHUB_TOKEN` is supplied by GitHub Actions through `${{ secrets.GITHUB_TOKEN }}` in `.github/workflows/dependabot-auto-merge.yml`.
-- No `.env` files, repository credential files, or application secret configuration were detected; runtime code does not request secrets.
+- No application secrets, credential files, or secret-management integration are required by runtime source.
+- GitHub-hosted automation relies on the repository-scoped token generated by GitHub Actions; only the token name is referenced in `.github/workflows/dependabot-auto-merge.yml`.
+- No private NuGet feed credentials, signing certificate configuration, cloud deployment credentials, or checked-in secret configuration are detected.
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None in application code. GitHub event triggers in `.github/workflows/*.yml` are repository automation events, not public application endpoints.
+- Application endpoints: none. This is a desktop process with no HTTP server or callback listener.
+- Repository automation responds to GitHub push, pull-request, tag, and schedule events declared in `.github/workflows/*.yml`; these are CI event triggers, not application webhooks.
 
 **Outgoing:**
-- None in application code; no HTTP, webhook, email, analytics, or notification integration is implemented under `ScannerCore/`, `SizeScanner.Avalonia/`, or `ScannerConsole/`.
-- GitHub release and pull-request mutations are performed only inside `.github/workflows/release.yml` and `.github/workflows/dependabot-auto-merge.yml` using GitHub-provided actions and credentials.
+- Application callbacks/webhooks: none.
+- Release and dependency workflows call GitHub platform operations through hosted actions and the GitHub CLI in `.github/workflows/release.yml` and `.github/workflows/dependabot-auto-merge.yml`.
+
+## Windows Platform Integrations
+
+**Native Directory Enumeration:**
+- `ScannerCore/DirectoryScanner.cs` opens directories with `kernel32.dll!CreateFile` and streams entries from `ntdll.dll!NtQueryDirectoryFile`.
+- Unsafe parsing reads Windows `FILE_DIRECTORY_INFORMATION` records directly, including allocation size, logical size, attributes, and names.
+- Reparse points are skipped unless marked offline so OneDrive online-only placeholders remain visible; this behavior depends on Windows file-attribute semantics.
+
+**Storage Device Policy:**
+- `ScannerCore/VolumeParallelismPolicy.cs` opens local fixed-volume device paths through `kernel32.dll!CreateFile`.
+- The same service calls `kernel32.dll!DeviceIoControl` with `IOCTL_STORAGE_QUERY_PROPERTY` to detect seek penalty and enable top-level parallel scanning only for SSD-class storage.
+- UNC paths, non-fixed drives, inaccessible devices, and failed property queries conservatively remain sequential.
+
+**Drive and Filesystem Shell:**
+- `System.IO.DriveInfo` supplies ready-drive discovery and free/total space in `SizeScanner.Avalonia/Services/DriveProvider.cs` and `ScannerCore/DriveScanner.cs`.
+- Avalonia's `StorageProvider.OpenFolderPickerAsync` opens the platform folder picker in `SizeScanner.Avalonia/Services/AvaloniaFolderPicker.cs`.
+- `explorer.exe /select` reveals a chart item in Windows Explorer from `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`.
+- `Microsoft.VisualBasic.FileIO.FileSystem` sends files and directories to the Windows Recycle Bin; permanent deletion uses `System.IO.File` and `System.IO.Directory` in `SizeScanner.Avalonia/Services/WindowsFileSystemActions.cs`.
+
+**Desktop Shell and UI:**
+- `SizeScanner.Avalonia/Program.cs` uses Avalonia platform detection and the classic desktop lifetime.
+- `SizeScanner.Avalonia/App.axaml` loads Avalonia's Fluent theme and Windows-compatible system resources.
+- `SizeScanner.Avalonia/app.manifest` declares Windows 10/11 compatibility and Windows common-controls v6.
 
 ---
 
-*Integration audit: 2026-07-16*
+*Integration audit: 2026-08-06*
