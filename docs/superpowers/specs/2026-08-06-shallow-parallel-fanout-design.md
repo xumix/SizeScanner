@@ -304,6 +304,136 @@ Applying the rule conservatively: since **D ≈ C**, the decision is to **revert
 
 **Follow-up note (from the E result):** three-level fan-out (E) was ~31% faster than two-level (D) on this machine's `C:\`, well outside noise. That is evidence that shallow fan-out is leaving real parallelism on the table deeper in the tree (e.g. inside `Windows\` or large user profile subtrees), and is a concrete data point in favor of the deferred full work-stealing design mentioned in Non-goals/Risks, rather than simply raising `ParallelFanOutLevels` again by fixed increments.
 
-### Resulting change
+### Resulting change (initial, superseded by the confirmation run below)
 
 `ScannerCore/ScanTreeBudget.cs`: default `parallelFanOutLevels` changed from `2` to `1`. `maxDegreeOfParallelism` default (`0` → auto `Math.Min(ProcessorCount, 16)`) is unchanged — it was already confirmed correct by this measurement (C, D, E all use it and all beat A and B).
+
+**Caveat identified after the fact:** the grouped `A→B→C→D→E` order above always measures each config's two samples back-to-back before moving on, so the last config (E) is always measured against the warmest filesystem cache and the first config (A) always against the coldest. That is a real order confound, not just a hypothetical one — see the balanced confirmation run below, where the same config (A) measured cold vs. warm differs by ~27%, dwarfing the ~3–4% run-to-run noise seen on the parallel configs. The decision below was re-derived from a balanced re-run rather than relying on the grouped numbers alone.
+
+### Balanced confirmation run
+
+**Why:** the grouped order's cache-warmth confound (above) could not be ruled out as the reason `D` and `C` came out close and `E` came out ahead — an artifact of run position rather than a real property of three-level fan-out. `Fan_out_configuration_matrix_report` was revised to collect its two samples per config across **two global rounds** instead of two back-to-back samples per config: round 1 walks the configs `A→B→C→D→E`, round 2 walks them in reverse, `E→D→C→B→A`. Every config now gets exactly one early-round and one late-round sample (except the middle config, `C`, which is position 3 of 5 in both directions and so is consistently mid-run in both rounds — an accepted limitation of a simple two-round reversal, not a hidden bias toward any other single config). Same 5 exact configs, same 2 samples each, same `GC.Collect`/`WaitForPendingFinalizers`/`GC.Collect` reset inside `MeasureScan`, same `Median` helper, same SSD/perf gates, no new dependency.
+
+Code (`ScannerCore.Tests/DirectoryWalkEngineParallelSpeedTests.cs`):
+
+```csharp
+    [Fact]
+    [Trait("Category", "Performance")]
+    public void Fan_out_configuration_matrix_report()
+    {
+        Assert.SkipUnless(RunPerfTests,
+            "Set SIZESCANNER_RUN_PERF_TESTS=1 to run the C: fan-out configuration matrix.");
+        Assert.SkipUnless(Directory.Exists(MeasurementRoot), $"{MeasurementRoot} is not available.");
+        Assert.SkipUnless(VolumeParallelismPolicy.ShouldParallelize(MeasurementRoot),
+            $"{MeasurementRoot} is not SSD-class.");
+
+        var processors = Math.Min(Environment.ProcessorCount, 16);
+        (string Name, int Levels, int Degree)[] configs =
+        [
+            ("A sequential",      0, 1),
+            ("B root-only dop4",  1, 4),
+            ("C root-only dopN",  1, processors),
+            ("D two-level dopN",  2, processors),
+            ("E three-level dopN",3, processors)
+        ];
+
+        var samples = new List<TimeSpan>[configs.Length];
+        var totals = new long[configs.Length];
+        for (var i = 0; i < configs.Length; i++)
+            samples[i] = new List<TimeSpan>(capacity: 2);
+
+        for (var round = 0; round < 2; round++)
+        {
+            var forward = round % 2 == 0;
+            output.WriteLine($"Round {round + 1} order: {(forward ? "A->E" : "E->A")}");
+
+            for (var step = 0; step < configs.Length; step++)
+            {
+                var index = forward ? step : configs.Length - 1 - step;
+                var config = configs[index];
+                var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
+                var budget = new ScanTreeBudget(
+                    maxDegreeOfParallelism: config.Degree,
+                    parallelFanOutLevels: config.Levels);
+
+                var elapsed = MeasureScan(engine, budget, out var total);
+                samples[index].Add(elapsed);
+                totals[index] = total;
+
+                output.WriteLine(
+                    $"  {config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
+                    $"elapsed={elapsed.TotalSeconds:F2}s total={total:N0}");
+            }
+        }
+
+        for (var i = 0; i < configs.Length; i++)
+        {
+            output.WriteLine(
+                $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
+                $"median={Median(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
+        }
+    }
+```
+
+`MeasureScan` and `Median` are unchanged from the initial run.
+
+#### Command
+
+```powershell
+$env:SIZESCANNER_RUN_PERF_TESTS = "1"
+dotnet test ScannerCore.Tests/ScannerCore.Tests.csproj -c Release --filter "FullyQualifiedName~Fan_out_configuration_matrix_report" --logger "console;verbosity=detailed"
+```
+
+#### Raw output (2 global rounds × 5 configs, 10 full `C:\` scans)
+
+```
+Round 1 order: A->E
+  A sequential         levels=0 dop=1  elapsed=38,08s total=395 078 032 392
+  B root-only dop4     levels=1 dop=4  elapsed=13,94s total=395 078 376 320
+  C root-only dopN     levels=1 dop=16 elapsed=12,77s total=395 078 593 840
+  D two-level dopN     levels=2 dop=16 elapsed=13,04s total=395 079 978 344
+  E three-level dopN   levels=3 dop=16 elapsed=9,24s total=395 080 564 104
+Round 2 order: E->A
+  E three-level dopN   levels=3 dop=16 elapsed=9,49s total=395 080 510 888
+  D two-level dopN     levels=2 dop=16 elapsed=13,18s total=395 081 473 480
+  C root-only dopN     levels=1 dop=16 elapsed=12,28s total=395 082 550 752
+  B root-only dop4     levels=1 dop=4  elapsed=13,82s total=395 083 075 104
+  A sequential         levels=0 dop=1  elapsed=27,98s total=395 083 169 312
+A sequential         levels=0 dop=1  median=38,08s total=395 083 169 312
+B root-only dop4     levels=1 dop=4  median=13,94s total=395 083 075 104
+C root-only dopN     levels=1 dop=16 median=12,77s total=395 082 550 752
+D two-level dopN     levels=2 dop=16 median=13,18s total=395 081 473 480
+E three-level dopN   levels=3 dop=16 median=9,49s total=395 080 510 888
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 2,7519 Minutes
+```
+
+(`Median` of 2 samples with this codebase's `sorted[Length / 2]` implementation returns the **larger/slower** of the two samples, not an average — that convention is unchanged from the original brief and applies identically to both runs below, so it does not bias the *comparison* between them, but "median" here always means "worse of two.")
+
+#### Cache-order effect, directly demonstrated
+
+Config **A** (fully sequential, single slot) was measured cold in round 1 (first, elapsed 38.08s) and warm in round 2 (last, elapsed 27.98s) — a **26.5% swing from position alone**, far larger than any other config's round-to-round spread (B 0.9%, C 3.8%, D 1.1%, E 2.6%). This confirms the human's concern directly: the original grouped order would have systematically flattered whichever config ran last (there, E) and penalized whichever ran first (there, A), rather than measuring only the fan-out/DOP effect. Parallel configs are far less sensitive to this (they're already close to saturating available I/O/CPU, so caching state matters much less), but A's swing alone is enough to invalidate treating the grouped run as free of order bias.
+
+#### Totals: discrepancy re-investigated with this run's own data, not by assumption
+
+The 10 totals from this run span 395,078,032,392 – 395,083,169,312 (~5.1 MB spread, ~1.4×10⁻⁵ relative to ~368 GiB) — the same order of magnitude as the initial run's spread and consistent with (not contradicting) the live-volume-churn explanation already established there. This run's own layout gives an additional, independent confirmation beyond that prior throwaway experiment: listing all 10 totals in the order they were actually measured shows they climb **almost monotonically with wall-clock position, independent of which config produced them** — e.g. round 1's total rises from A (measured 1st) through E (measured 5th), and every round-2 total is greater than or equal to its round-1 counterpart for the *same* config (E's is the sole, negligible exception, −53,216 bytes, ≈1.9×10⁻⁷ relative — consistent with a single background file being briefly smaller, e.g. a rewritten log or cache file, not a scan defect). A total that tracked *configuration* rather than *wall-clock position* would not show this shape. Conclusion unchanged: not BLOCKED, this is live-volume churn.
+
+#### Decision rule re-applied to the confirmed (balanced) medians
+
+| Comparison | Values | Verdict |
+|---|---|---|
+| D vs B | 13.18s vs 13.94s | D faster (~5.5%) |
+| D vs C | 13.18s vs 12.77s | D **slower** (~3.2%) — within the ~3.8% noise band `C` itself showed round-to-round |
+| E vs D | 9.49s vs 13.18s | E materially faster (~28.0%) — far outside any parallel config's round-to-round noise (max ~3.8%) |
+
+This reproduces the same shape as the initial grouped run, now with the cache-order confound eliminated: **D ≈ C still holds** (D does not beat C; the gap is inside measured noise) **and E is still materially faster than D**, simultaneously. These are the plan's branch 2 and branch 3 conditions, and they still both fire at once — the balanced run did not resolve the conflict, it reproduced it. Per this task's instruction, that means **do not choose a branch again; return `NEEDS_CONTEXT`** with the numbers instead of re-deriving a pick as Task 6 did.
+
+**Decision status: NEEDS_CONTEXT.** No change was made to `ScannerCore/ScanTreeBudget.cs` or its tests as a result of this confirmation run — current `HEAD` (`parallelFanOutLevels` default `1`, `maxDegreeOfParallelism` default auto `Math.Min(ProcessorCount, 16)`) is left as committed in Task 6, since the balanced evidence does not call for a *different* value, it calls for a human decision between two valid readings of the plan's rule:
+
+- Treat "D ≈ C" as authoritative (as Task 6 did) → keep the default at `parallelFanOutLevels: 1`.
+- Treat "E materially faster than D" as the dominant signal → the default should arguably not be `1` at all, but this branch's own text ("leave the default at 2 and add a note that work-stealing is worth a follow-up") does not fit either, since `2` (`D`) does not measurably beat `1` (`C`)'s DOP-only path. Taking `E`'s result at face value most directly argues for evaluating a `3`-level default or, more likely, prioritizing the deferred work-stealing design — not a call this measurement alone should make.
+
+Human input needed on: whether to keep `parallelFanOutLevels: 1` (current `HEAD`, conservative — ships only the confirmed DOP-bump win), promote `parallelFanOutLevels: 3` as the new default given `E`'s reproducible ~28% edge (a materially bigger change than the plan originally scoped, and not validated against non-`C:\` volume shapes), or treat `E`'s result purely as a work-stealing research trigger and leave the shipped default unchanged pending that separate design.

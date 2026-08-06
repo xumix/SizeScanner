@@ -68,6 +68,14 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             $"Parallel walk ({parallelMedian.TotalSeconds:F1}s) should be faster than sequential ({sequentialMedian.TotalSeconds:F1}s) on {MeasurementRoot}.");
     }
 
+    /// <summary>
+    /// Collects two samples per config across two global rounds — one pass A→E, one pass
+    /// E→A — so every config gets one early-round and one late-round sample instead of the
+    /// whole grouped order always measuring the last config against the warmest filesystem
+    /// cache. Grouping by config (run both of its samples back-to-back, then move on) was the
+    /// order-confound that motivated this shape; per-config medians below are therefore
+    /// comparable across configs, not just across rounds.
+    /// </summary>
     [Fact]
     [Trait("Category", "Performance")]
     public void Fan_out_configuration_matrix_report()
@@ -88,21 +96,40 @@ public sealed class DirectoryWalkEngineParallelSpeedTests(ITestOutputHelper outp
             ("E three-level dopN",3, processors)
         ];
 
-        foreach (var config in configs)
+        var samples = new List<TimeSpan>[configs.Length];
+        var totals = new long[configs.Length];
+        for (var i = 0; i < configs.Length; i++)
+            samples[i] = new List<TimeSpan>(capacity: 2);
+
+        for (var round = 0; round < 2; round++)
         {
-            var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
-            var budget = new ScanTreeBudget(
-                maxDegreeOfParallelism: config.Degree,
-                parallelFanOutLevels: config.Levels);
+            var forward = round % 2 == 0;
+            output.WriteLine($"Round {round + 1} order: {(forward ? "A->E" : "E->A")}");
 
-            var samples = new List<TimeSpan>(capacity: 2);
-            long total = 0;
-            for (var round = 0; round < 2; round++)
-                samples.Add(MeasureScan(engine, budget, out total));
+            for (var step = 0; step < configs.Length; step++)
+            {
+                var index = forward ? step : configs.Length - 1 - step;
+                var config = configs[index];
+                var engine = new DirectoryWalkEngine(_ => config.Levels > 0);
+                var budget = new ScanTreeBudget(
+                    maxDegreeOfParallelism: config.Degree,
+                    parallelFanOutLevels: config.Levels);
 
+                var elapsed = MeasureScan(engine, budget, out var total);
+                samples[index].Add(elapsed);
+                totals[index] = total;
+
+                output.WriteLine(
+                    $"  {config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
+                    $"elapsed={elapsed.TotalSeconds:F2}s total={total:N0}");
+            }
+        }
+
+        for (var i = 0; i < configs.Length; i++)
+        {
             output.WriteLine(
-                $"{config.Name,-20} levels={config.Levels} dop={config.Degree,-2} " +
-                $"median={Median(samples).TotalSeconds:F2}s total={total:N0}");
+                $"{configs[i].Name,-20} levels={configs[i].Levels} dop={configs[i].Degree,-2} " +
+                $"median={Median(samples[i]).TotalSeconds:F2}s total={totals[i]:N0}");
         }
     }
 
