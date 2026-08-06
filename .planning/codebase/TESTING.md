@@ -173,6 +173,8 @@ dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Rele
 **Unit Tests:**
 - Core model, budget, metadata, formatting, collector, engine selection, and pure policy tests live in `ScannerCore.Tests/FsItemTests.cs`, `ScannerCore.Tests/ScanTreeBudgetTests.cs`, `ScannerCore.Tests/DriveScanMetadataTests.cs`, `ScannerCore.Tests/HumanizeTests.cs`, `ScannerCore.Tests/BoundedChildCollectorTests.cs`, and `ScannerCore.Tests/ScanEngineSelectorTests.cs`.
 - Chart builder, hit-testing, filtering, palette, tooltip, and view-model policy tests live under `SizeScanner.Avalonia.Tests/`.
+- Unified scan progress/busy-state coverage lives in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs` (`Scope_scan_reports_progress_and_resets_transient_state_on_completion`, `IsChartScanning_includes_toolbar_root_scan_state`) and `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs` (`Scoped_scan_drives_main_window_progress_presentation`, `Root_scan_without_percentage_uses_indeterminate_progress`, `Failed_root_scan_clears_busy_progress_state`), asserting that scoped scans update the exposed path/value/determinate state, an unknown percentage selects indeterminate progress, the toolbar mirrors chart-owned scoped progress, and completion/cancellation/failure reset transient busy/progress state from `finally` paths.
+- `SizeScanner.Avalonia.Tests/BusySpinnerControlTests.cs` covers `BusySpinnerControl`'s public property contract (`IsActive` default/toggle without a visual tree, brush round-trip/defaults) without attaching it to a rendered tree.
 - Use exact domain assertions for sizes, node identity, parent links, synthetic metadata, segment order, sweep angles, and call records.
 
 **Integration Tests:**
@@ -184,6 +186,8 @@ dotnet test SizeScanner.Avalonia.Tests/SizeScanner.Avalonia.Tests.csproj -c Rele
 **E2E Tests:**
 - No desktop automation, screenshot comparison, rendered visual regression, or packaged-application E2E framework is used.
 - `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs` constructs Avalonia view objects without launching the desktop lifetime; `SizeScanner.Avalonia.Tests/SmokeTests.cs` validates test-tree plumbing, not a running application.
+- `ViewLocatorTests.cs` also proves chart-view spinner overlay composition and wiring: `ChartView_contains_app_owned_busy_spinner` asserts `BusySpinnerControl` exists at `PART_ScanSpinner`; `ChartView_scan_overlay_is_configured_to_block_pointer_input` asserts the overlay `Grid` (`PART_ScanOverlay`) has a non-null `Background` and `IsHitTestVisible`, the mechanism that blocks pointer input to the chart underneath; `ChartView_overlay_and_spinner_track_IsChartScanning` toggles a real `ChartViewModel.IsRootScanInProgress` and asserts the overlay's `IsVisible`, the spinner's `IsActive`, and `SunburstChartControl.IsEnabled` all react in both directions, closing the keyboard/context-menu concurrency gap alongside pointer blocking.
+- The real `DispatcherTimer.Start()`/`Stop()` transitions on `BusySpinnerControl`'s actual attach/detach-to-visual-tree lifecycle are not exercised by an automated test: Avalonia only raises those lifecycle events under a windowing platform (a real `Window` or `Avalonia.Headless`), which this test host intentionally does not add. Manual verification (toggle a scan in the running app; confirm the spinner animates while scanning and stops on completion/cancellation or view teardown) remains the check for that specific transition.
 - `ScannerConsole/Program.cs` is a manual scan/performance harness, not an automated test suite.
 
 **Performance Tests:**
@@ -225,6 +229,21 @@ Assert.Throws<OperationCanceledException>(() =>
 - For recoverable UI/service failures, configure a failing fake and assert that state remains unchanged, as `FailingFs` is used in `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`.
 - For corrupt or missing persistence input, exercise the real boundary and assert defaults rather than the internal catch block, as in `SizeScanner.Avalonia.Tests/JsonSettingsStoreTests.cs`.
 - For missing filesystem objects, assert structured failure (`DeleteResult`) or nullable cursor contracts instead of expecting exceptions, as in `SizeScanner.Avalonia.Tests/WindowsFileSystemActionsTests.cs` and `ScannerCore.Tests/DirectoryEntryCursorTests.cs`.
+
+**Avalonia Dispatcher Thread Affinity:**
+```csharp
+[Fact]
+public void ChartView_contains_app_owned_busy_spinner()
+{
+    var spinner = AvaloniaUiThread.Invoke(() =>
+        new ChartView().FindControl<BusySpinnerControl>("PART_ScanSpinner"));
+
+    Assert.NotNull(spinner);
+}
+```
+- Avalonia's `Dispatcher.UIThread` pins itself, on first use, to whichever physical thread touches it first; with no windowing platform initialized (no `Avalonia.Headless` dependency, per the no-new-test-dependency constraint), disabling xUnit parallelization alone does not guarantee a single physical thread for sequential tests.
+- Route every test that constructs or reads a property on an `AvaloniaObject`-derived type (`ChartView`, `MainWindow`, `TextBlock`, `BusySpinnerControl`, `SunburstChartControl`) through `AvaloniaUiThread.Invoke(...)` (`SizeScanner.Avalonia.Tests/AvaloniaUiThread.cs`), a dedicated background thread the Dispatcher can pin to deterministically.
+- `SizeScanner.Avalonia.Tests/AssemblyInfo.cs` also sets `[assembly: CollectionBehavior(DisableTestParallelization = true, MaxParallelThreads = 1)]` as defense in depth alongside `AvaloniaUiThread`.
 
 **Concurrency and Resource Bounds:**
 - Compare sequential and parallel results for total, ordering, parent links, and retained-node limits in `ScannerCore.Tests/DirectoryWalkEngineParallelTests.cs`.

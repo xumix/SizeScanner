@@ -158,14 +158,18 @@ part of this layout.
 **`SizeScanner.Avalonia/Views/`:**
 - Purpose: Declare the visual tree, bind commands/state, translate pointer and
   window events, and render the chart.
-- Contains: `*.axaml`/`*.axaml.cs` pairs and the custom
-  `SunburstChartControl`.
+- Contains: `*.axaml`/`*.axaml.cs` pairs, the custom `SunburstChartControl`,
+  and the app-owned `BusySpinnerControl`.
 - Key files: `SizeScanner.Avalonia/Views/MainWindow.axaml`,
   `SizeScanner.Avalonia/Views/ChartView.axaml`,
-  `SizeScanner.Avalonia/Views/SunburstChartControl.cs`
+  `SizeScanner.Avalonia/Views/SunburstChartControl.cs`,
+  `SizeScanner.Avalonia/Views/BusySpinnerControl.cs`
 - Placement rule: Use code-behind only for framework lifecycle, event-to-VM
   translation, hit-test plumbing, and rendering. Put business policy in
-  view-models or chart rules.
+  view-models or chart rules. `SizeScanner.Avalonia/Views/ChartView.axaml` is
+  the sole owner of the scan-busy overlay (dimming border, pointer/keyboard
+  blocking, and `BusySpinnerControl` composition) bound to
+  `ChartViewModel.IsChartScanning`.
 
 **`SizeScanner.Avalonia/Charting/`:**
 - Purpose: Convert scan trees into a bounded sunburst display model and provide
@@ -198,16 +202,23 @@ part of this layout.
 
 **`SizeScanner.Avalonia.Tests/`:**
 - Purpose: Test view-model workflows, chart algorithms and caps, hit testing,
-  settings, service boundaries, and Windows file actions.
-- Contains: Flat xUnit test classes plus local fakes and tree/temp-directory
-  factories.
+  settings, service boundaries, Windows file actions, and custom Avalonia
+  control/view composition.
+- Contains: Flat xUnit test classes plus local fakes, tree/temp-directory
+  factories, and a dedicated Avalonia-dispatcher test thread.
 - Key files: `SizeScanner.Avalonia.Tests/MainWindowViewModelTests.cs`,
   `SizeScanner.Avalonia.Tests/ChartViewModelTests.cs`,
   `SizeScanner.Avalonia.Tests/SunburstChartBuilderTests.cs`,
+  `SizeScanner.Avalonia.Tests/BusySpinnerControlTests.cs`,
+  `SizeScanner.Avalonia.Tests/ViewLocatorTests.cs`,
+  `SizeScanner.Avalonia.Tests/AvaloniaUiThread.cs`,
   `SizeScanner.Avalonia.Tests/FakeScanService.cs`,
   `SizeScanner.Avalonia.Tests/TestTree.cs`
 - Placement rule: Mirror the production type name with a `Tests` suffix and
-  reuse the local fake/factory files rather than adding test hooks to production.
+  reuse the local fake/factory files rather than adding test hooks to
+  production. Route any test that constructs or reads a property on an
+  `AvaloniaObject`-derived type through `AvaloniaUiThread.Invoke` to avoid
+  Dispatcher thread-affinity flakiness.
 
 **`ScannerConsole/`:**
 - Purpose: Exercise `ScannerCore` without the desktop UI.
@@ -309,6 +320,10 @@ part of this layout.
 - `SizeScanner.Avalonia/Charting/FilterThreshold.cs`: Shared filter math.
 - `SizeScanner.Avalonia/Views/SunburstChartControl.cs`: Avalonia rendering and
   geometry caching.
+- `SizeScanner.Avalonia/Views/ChartView.axaml`: Chart host and scan-busy overlay
+  owner (dimming, pointer/keyboard blocking, spinner composition).
+- `SizeScanner.Avalonia/Views/BusySpinnerControl.cs`: Dependency-free circular
+  busy spinner used by the chart scan overlay.
 
 **Testing:**
 - `ScannerCore.Tests/ScannerCore.Tests.csproj`: Core xUnit project.
@@ -321,6 +336,11 @@ part of this layout.
 - `SizeScanner.Avalonia.Tests/FakeScanService.cs`: Root/scope scan fake.
 - `SizeScanner.Avalonia.Tests/TestTree.cs`: `FsItem` factory.
 - `SizeScanner.Avalonia.Tests/TempDir.cs`: UI service filesystem fixture.
+- `SizeScanner.Avalonia.Tests/AvaloniaUiThread.cs`: Dedicated background thread
+  that Avalonia's `Dispatcher` pins to, so every test constructing or reading
+  `AvaloniaObject`-derived types runs on one physical thread.
+- `SizeScanner.Avalonia.Tests/AssemblyInfo.cs`: `CollectionBehavior` disabling
+  test parallelization as defense in depth alongside `AvaloniaUiThread`.
 
 **Documentation and Automation:**
 - `README.md`: End-user/developer overview.

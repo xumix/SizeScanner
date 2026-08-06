@@ -54,13 +54,15 @@ part of the production UI.
 |-----------|----------------|------|
 | Desktop bootstrap | Starts the STA Avalonia desktop lifetime | `SizeScanner.Avalonia/Program.cs` |
 | Composition root | Registers singleton application services, view-models, and the main window | `SizeScanner.Avalonia/App.axaml.cs` |
-| Main window | Hosts toolbar, chart, progress/status, and inaccessible-path pane | `SizeScanner.Avalonia/Views/MainWindow.axaml` |
-| Main orchestration VM | Owns root scan commands, cancellation, progress, settings snapshot, drives, and inaccessible-path display | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
-| Chart interaction VM | Owns chart scope, layout, hover/context state, scoped rescans, and deletion workflows | `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` |
+| Main window | Hosts toolbar, chart, progress/status, and inaccessible-path pane; binds unified toolbar progress/Cancel visibility to `MainWindowViewModel`'s display properties regardless of whether a root or chart-initiated scoped scan is active | `SizeScanner.Avalonia/Views/MainWindow.axaml` |
+| Main orchestration VM | Owns root scan commands, cancellation, progress, settings snapshot, drives, inaccessible-path display, and unified toolbar progress presentation (`DisplayProgressValue`, `DisplayProgressIsIndeterminate`, `IsBusy`) that selects between root and chart-owned scoped scan state | `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` |
+| Chart interaction VM | Owns chart scope, layout, hover/context state, scoped rescans, deletion workflows, scoped scan progress, and the unified `IsChartScanning` busy flag that drives the chart's pointer-blocking scan overlay | `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` |
 | Scan adapter | Moves synchronous core scans off the UI thread and distinguishes root state from throwaway scope scans | `SizeScanner.Avalonia/Services/ScanService.cs` |
 | Chart builder | Converts an `FsItem` tree into capped, filtered, ring-indexed sunburst segments | `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` |
 | Chart model/hit testing | Stores immutable segment layout and builds per-ring indexes for polar hit testing | `SizeScanner.Avalonia/Charting/SunburstChart.cs`, `SizeScanner.Avalonia/Charting/SunburstHitTest.cs` |
 | Chart control | Caches Avalonia geometries and brushes, renders segments, hover outline, and center total | `SizeScanner.Avalonia/Views/SunburstChartControl.cs` |
+| Chart scan overlay | `ChartView.axaml` owns a dimming, hit-testing overlay bound to `IsChartScanning` that disables the chart control and hosts the busy spinner during any root or scoped scan | `SizeScanner.Avalonia/Views/ChartView.axaml` |
+| Busy spinner control | App-owned, dependency-free circular spinner rendered via `DrawingContext`/`StreamGeometry`, driven by a `DispatcherTimer` gated on visual-tree attachment and `IsActive` | `SizeScanner.Avalonia/Views/BusySpinnerControl.cs` |
 | Scan facade | Normalizes drive/directory scans, progress, inaccessible metadata, and synthetic drive entries | `ScannerCore/DriveScanner.cs` |
 | Engine strategy | Defines scan-engine equivalence and ordered fallback selection | `ScannerCore/IScanEngine.cs`, `ScannerCore/ScanEngineSelector.cs` |
 | Directory engine | Chooses allocation/logical sizing and SSD-gated top-level fan-out | `ScannerCore/DirectoryWalkEngine.cs` |
@@ -111,12 +113,16 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
 - Purpose: Declare visual structure and translate pointer/window lifecycle events
   into view-model operations.
 - Location: `SizeScanner.Avalonia/Views/`
-- Contains: Compiled AXAML, minimal code-behind, and `SunburstChartControl`.
+- Contains: Compiled AXAML, minimal code-behind, `SunburstChartControl`, and the
+  app-owned `BusySpinnerControl`.
 - Depends on: Avalonia, `SizeScanner.Avalonia/ViewModels/`, and
   `SizeScanner.Avalonia/Charting/`.
 - Used by: `SizeScanner.Avalonia/App.axaml.cs` and `SizeScanner.Avalonia/ViewLocator.cs`.
 - Rule: Keep scan, filesystem, and context-menu policy out of views. Delegate
-  policy to view-models and `ChartNodeRules`.
+  policy to view-models and `ChartNodeRules`. `ChartView.axaml` owns the unified
+  scan-overlay presentation (dimming, hit-test blocking, spinner, and disabling
+  the chart control) bound entirely to `ChartViewModel.IsChartScanning`; it adds
+  no scan-state ownership of its own.
 
 **View-Models:**
 - Purpose: Hold observable UI state, commands, cancellation ownership, and
@@ -126,7 +132,11 @@ boundary and a strategy-based, streaming scan engine in a separate core library.
 - Depends on: UI abstraction interfaces, charting types, models, and `ScannerCore`.
 - Used by: AXAML compiled bindings and view code-behind.
 - Rule: `MainWindowViewModel` owns root-scan/settings state;
-  `ChartViewModel` owns chart scope/interaction/delete state.
+  `ChartViewModel` owns chart scope/interaction/delete state and scoped scan
+  progress. Each view-model keeps its own scan state as the single owner;
+  `MainWindowViewModel` exposes computed `Display*` properties that select
+  between root and `ChartViewModel`-owned scoped state via a `PropertyChanged`
+  bridge rather than a second copy of the same flags.
 
 **Charting Domain:**
 - Purpose: Transform scan trees into a bounded display model and answer

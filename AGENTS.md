@@ -28,6 +28,7 @@ Dependency flow: UI/Console/Tests → `ScannerCore`. Central package versions li
 - **Size mode**: drive scans use allocation size, directory scans use logical file size; `isDriveScan` flows from `DriveScanner` into `DirectoryScanner`'s `preferAllocatedSize` (allocation size vs `EndOfFile`).
 - **Progress**: `IProgress<ScanProgress>` callbacks from `DriveScanner` (throttled to 300 ms). UI wires `Progress<ScanProgress>` to the status bar and progress bar.
 - **Cancellation**: Both `ScanDrive` and `ScanDirectory` accept `CancellationToken`.
+- **Unified progress/busy presentation**: A root scan (`MainWindowViewModel`) and a chart-initiated scoped scan (`ChartViewModel`, drill-down/"Go up"/stale-root rescan) both drive the same toolbar progress bar and Cancel button; `MainWindowViewModel.DisplayProgressValue`/`DisplayProgressIsIndeterminate`/`IsBusy` pick whichever scan is active. A directory scan without a known total (`ScanProgress.PercentComplete == null`) is indeterminate; it becomes determinate once a percentage is reported. `ChartView` always overlays a dimming, pointer- and keyboard-blocking `BusySpinnerControl` over the chart during any root or scoped scan (`ChartViewModel.IsChartScanning`), disabling `SunburstChartControl` via `IsEnabled` rather than only covering it.
 - **Parallelism**: only top-level directory fan-out is parallel, and only when `VolumeParallelismPolicy` detects no seek penalty (SSD/NVMe). HDDs and unknown volumes stay sequential.
 
 ## Build & run
@@ -87,7 +88,8 @@ Both platforms: restore/build `SizeScanner.slnx` (Release), run `ScannerCore.Tes
 - `SizeScanner.Avalonia/Charting/SunburstChartBuilder.cs` — capped sunburst segment building
 - `SizeScanner.Avalonia/Charting/ChartNodeRules.cs` — chart synthetic/scoping/context-menu rules
 - `SizeScanner.Avalonia/Charting/SunburstHitTest.cs` / `SunburstChart.cs` — per-ring segment indexes and hit-testing
-- `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` — toolbar, scan orchestration, settings
-- `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` — chart scope, hover, context actions
+- `SizeScanner.Avalonia/Views/BusySpinnerControl.cs` — dependency-free circular busy spinner; `DispatcherTimer` runs only while attached to the visual tree and active
+- `SizeScanner.Avalonia/ViewModels/MainWindowViewModel.cs` — toolbar, scan orchestration, unified progress presentation, settings
+- `SizeScanner.Avalonia/ViewModels/ChartViewModel.cs` — chart scope, hover, context actions, scoped scan progress, unified chart busy state
 - `SizeScanner.Avalonia/Models/UserSettings.cs` — persisted settings DTO
 - `SizeScanner.Avalonia/Services/JsonSettingsStore.cs` — JSON settings load/save
